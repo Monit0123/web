@@ -1,0 +1,16 @@
+{
+  "name": "ONYX Athletic Club",
+  "short_name": "ONYX",
+  "description": "Premium strength, conditioning and recovery training in Kharar, Punjab.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071616",
+  "theme_color": "#071616",
+  "lang": "en-IN",
+  "icons": [
+    { "src": "assets/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "assets/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

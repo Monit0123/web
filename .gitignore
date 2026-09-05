@@ -1,0 +1,14 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Build + distribution artifacts
+onyx-website.zip
+*.log
+
+# Working files that should not ship
+work/
+*.patch
