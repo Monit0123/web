@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Your ONYX profile — your membership, your assessment, your personalized training week and diet plan." /><title>My ONYX — Profile</title>
+
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="canonical" href="https://onyxathletic.club/profile.html" />
+    <meta property="og:type" content="website" /><meta property="og:site_name" content="ONYX Athletic Club" /><meta property="og:locale" content="en_IN" /><meta property="og:url" content="https://onyxathletic.club/profile.html" />
+    <meta property="og:title" content="My ONYX — Profile" /><meta property="og:description" content="Your ONYX profile — membership, assessment, training week and diet plan." />
+    <meta property="og:image" content="https://onyxathletic.club/assets/gym-hero.jpg" /><meta property="og:image:width" content="1672" /><meta property="og:image:height" content="941" /><meta property="og:image:alt" content="Athletes training on the floor at ONYX Athletic Club" />
+    <meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="My ONYX — Profile" /><meta name="twitter:description" content="Your ONYX profile — membership, assessment, training week and diet plan." /><meta name="twitter:image" content="https://onyxathletic.club/assets/gym-hero.jpg" />
+    <link rel="icon" href="favicon.ico" sizes="32x32" /><link rel="icon" type="image/svg+xml" href="assets/favicon.svg" /><link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" /><link rel="apple-touch-icon" href="assets/apple-touch-icon.png" /><link rel="manifest" href="site.webmanifest" /><meta name="theme-color" content="#071616" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet" /><link rel="stylesheet" href="styles.css?v=23" />
+  </head>
+  <body class="onyx-brand profile-page"><a class="skip-link" href="#top">Skip to content</a><div class="grain"></div>
+    <header class="site-header"><a class="wordmark" href="index.html" aria-label="ONYX home"><span></span>ONYX</a><nav><a class="nav-directional" href="index.html#train">Train</a><a class="nav-directional" href="index.html#schedule">Schedule</a><a class="nav-directional" href="index.html#experience">Experience</a><a class="nav-directional" href="index.html#membership">Membership</a><a class="nav-directional" href="about.html">About</a></nav><button class="menu-button" id="menu-button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">☰</button></header>
+    <div class="mobile-menu" id="mobile-menu" aria-label="Mobile navigation"><p class="mobile-menu-eyebrow">MENU</p><nav><a href="index.html#train"><small>01</small>Train</a><a href="index.html#schedule"><small>02</small>Schedule</a><a href="index.html#experience"><small>03</small>Experience</a><a href="index.html#membership"><small>04</small>Membership</a><a href="about.html"><small>05</small>About</a></nav></div>
+    <main id="top">
+      <section class="profile-gate section-pad" id="profile-gate"><p class="eyebrow">Member area</p><h1>Your progress<br />lives <em>here.</em></h1><p class="about-hero-desc">Log in or create your free account to see your membership, your assessment results, and the training week + diet plan built around your body.</p><button type="button" class="program-get-started" data-open-auth><span>Log in / Sign up</span></button></section>
+      <section class="about-hero" id="profile-view" hidden><p class="eyebrow">MY ONYX</p><h1 class="pf-title">Keep pushing,<br /><em id="pf-name">member.</em></h1><p class="about-hero-desc" id="pf-sub"></p><div class="pf-stats" id="pf-stats"></div><div class="pf-actions"><button type="button" class="plan-join" id="pf-retake"><span>Retake assessment</span></button><a class="plan-ghost pf-ghost-link" href="index.html#membership">Membership plans</a><button type="button" class="plan-ghost" id="pf-logout">Log out</button></div></section>
+      <section class="pf-empty section-pad" id="profile-empty" hidden><p class="eyebrow">One assessment away</p><h2>Your plan isn&rsquo;t<br /><em>written yet.</em></h2><p class="about-hero-desc" style="color:#c7cec7">Answer seven quick questions — goal, current and target weight, experience, schedule, diet — and this page fills itself in with your training week and diet plan.</p><button type="button" class="program-get-started" id="pf-start-assessment"><span>Start assessment</span></button></section>
+      <section class="pf-empty section-pad" id="profile-member" hidden><p class="eyebrow">One step away</p><h2>Your plan is written.<br /><em>Unlock it.</em></h2><p class="about-hero-desc" style="color:#c7cec7">Your assessment is done and your training week + diet plan are ready. They unlock the moment you activate any ONYX membership.</p><div class="pf-actions" style="margin-top:0"><a class="program-get-started pf-member-link" href="index.html#membership"><span>Become a member</span></a></div></section>
+      <section class="pf-training section-pad" id="profile-training" hidden><p class="eyebrow">Your program</p><h2>Your training<br /><em>week.</em></h2><p class="pf-note" id="pf-training-note"></p><div class="pf-days" id="pf-days"></div></section>
+      <section class="pf-diet section-pad" id="profile-diet" hidden><p class="eyebrow">Fuel for the work</p><h2>Your diet<br /><em>plan.</em></h2><div class="pf-macro"><div><strong id="pf-calories">0</strong><span>KCAL / DAY</span></div><div><strong id="pf-protein">0g</strong><span>PROTEIN / DAY</span></div><div><strong id="pf-water">3L+</strong><span>WATER / DAY</span></div></div><div class="pf-meals" id="pf-meals"></div><p class="pf-diet-note">Generic template from your assessment — your coach and a nutritionist fine-tune it to you. Not medical advice.</p></section>
+    </main>
+    <button type="button" class="reach-fab" data-open-contact><span>Reach out to us</span><b class="arrow-icon" aria-hidden="true">→</b></button>
+    <dialog class="contact-dialog" id="contact-dialog" aria-labelledby="contact-title">
+      <form method="dialog"><button class="plans-close" aria-label="Close contact form" value="close">✕</button></form>
+      <div class="contact-main">
+        <p class="eyebrow">Reach out to us</p>
+        <h2 id="contact-title">Talk to a<br /><em>human.</em></h2>
+        <p class="contact-copy">Tell us where to reach you. A coach — not a chatbot — will call you back and walk you through everything ONYX.</p>
+        <form class="contact-form" id="contact-form" novalidate>
+          <label class="field"><span class="field-label">YOUR NAME</span><input type="text" name="name" autocomplete="name" placeholder="e.g. Aarav Sharma" required /></label>
+          <label class="field"><span class="field-label">PHONE NUMBER</span><span class="phone-wrap"><span class="phone-prefix">+91</span><input type="tel" name="phone" inputmode="numeric" maxlength="10" placeholder="98765 43210" autocomplete="tel-national" required /></span></label>
+          <p class="field-error" role="alert" hidden></p>
+          <button type="submit" class="contact-submit directional-tile"><span>Request a call back</span><b class="arrow-icon" aria-hidden="true">→</b></button>
+          <p class="contact-fineprint">NO SPAM. ONE CALL, ONE HUMAN, ZERO PRESSURE.</p>
+        </form>
+      </div>
+      <div class="contact-success" hidden>
+        <div class="success-ring" aria-hidden="true">✓</div>
+        <p class="eyebrow">Request received</p>
+        <h3 class="contact-success-title">You&rsquo;re on<br /><em>our list.</em></h3>
+        <p class="plans-confirmation-copy">Our team will reach out within 24 hours to set up your first session.</p>
+        <p class="contact-echo"></p>
+        <button type="button" class="plans-done contact-done directional-tile"><span>Done</span><b class="arrow-icon" aria-hidden="true">→</b></button>
+      </div>
+    </dialog>
+    <footer><a class="wordmark" href="index.html"><span></span>ONYX</a><p>© 2026 ONYX ATHLETIC CLUB · KHARAR, PUNJAB</p><div><a class="nav-directional" href="https://www.instagram.com/sr.monit/" target="_blank" rel="noopener">Instagram</a><a class="nav-directional" href="mailto:vx.monit@gmail.com">Email</a><button type="button" class="nav-directional footer-support" data-open-contact>Support</button><a class="nav-directional" href="privacy.html">Privacy</a></div></footer><script src="script.js?v=23"></script>
+  </body>
+</html>
