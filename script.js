@@ -140,7 +140,10 @@ const PAYMENT_LINKS = {
   'Monthly': 'https://rzp.io/rzp/JSB2YFiU',
   '3 months': 'https://rzp.io/rzp/cgbXV09',
   '6 months': 'https://rzp.io/rzp/iM36BiGS',
-  '12 months': 'https://rzp.io/rzp/6KLhx0W'
+  '12 months': 'https://rzp.io/rzp/6KLhx0W',
+  'Single PT session': 'https://rzp.io/rzp/oz6JiXGl',
+  '8-session PT pack': 'https://rzp.io/rzp/5BCtWy2L',
+  '12-session PT pack': 'https://rzp.io/rzp/xYu0PMwf'
 };
 if (plansDialog) {
   const openPlansButton = document.getElementById('open-plans');
@@ -638,6 +641,8 @@ const verifyMembership = async (user, payment) => {
     const result = await response.json();
     if (!result || result.active !== true) return false;
     user.plan = result.plan || payment.plan;      // ← the ONLY place plan is set
+    user.activatedAt = new Date().toISOString();
+    user.expiresAt = addMonths(new Date(), planMonths(user.plan)).toISOString();
     user.pendingPayment = null;
     saveCurrentUser(user);
     return true;
@@ -654,7 +659,8 @@ const beginPaymentFlow = (link, plan) => {
     openAuth('Log in or create your free ONYX account to continue to secure payment.');
     return;
   }
-  const payment = { plan: `${plan} membership`, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null };
+  const fullPlan = plan.includes('PT') ? plan : `${plan} membership`;
+  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null };
   user.pendingPayment = payment;                  // pending — NOT an active plan
   saveCurrentUser(user);
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
@@ -676,8 +682,11 @@ const showPaymentPending = payment => {
     note.className = 'payment-ref';
     confirmation.querySelector('.plans-confirmation-copy').after(note);
   }
+  const nextStep = payment.plan.includes('PT')
+    ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
+    : `we activate your membership as soon as the payment clears. `;
   note.innerHTML = `Your reference is <strong>${payment.ref}</strong>. Keep it handy — ` +
-    `we activate your membership as soon as the payment clears. ` +
+    nextStep +
     `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`;
   main.hidden = true;
   confirmation.hidden = false;
@@ -744,7 +753,16 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
     openOnboard();
   } else {
     const record = users[email];
-    if (!record || !(await verifyPassword(record, password))) return fail('Wrong email or password.');
+    let lock = {};
+    try { lock = JSON.parse(localStorage.getItem('onyx_login_lock') || '{}'); } catch (err) { lock = {}; }
+    if (lock.until && Date.now() < lock.until) return fail('Too many tries — wait a minute and try again.');
+    if (!record || !(await verifyPassword(record, password))) {
+      lock.n = (lock.n || 0) + 1;
+      if (lock.n >= 5) { lock.until = Date.now() + 60000; lock.n = 0; }
+      try { localStorage.setItem('onyx_login_lock', JSON.stringify(lock)); } catch (err) { /* private mode */ }
+      return fail(lock.until && Date.now() < lock.until ? 'Too many tries — wait a minute and try again.' : 'Wrong email or password.');
+    }
+    try { localStorage.removeItem('onyx_login_lock'); } catch (err) { /* private mode */ }
     if (record.algo !== 'pbkdf2-sha256') {          // silently upgrade legacy hashes
       const { algo, salt, hash } = await hashPassword(password);
       Object.assign(record, { algo, salt, pass: hash });
@@ -773,7 +791,7 @@ onboardDialog.querySelectorAll('.ob-chips').forEach(groupEl => {
 document.getElementById('ob-skip').addEventListener('click', () => { onboardDialog.close(); runPendingAction(); });
 onboardDialog.addEventListener('close', () => runPendingAction());
 
-const GOAL_LABELS = { build: 'Build muscle', lose: 'Lose fat', fit: 'Get fit & lean', athlete: 'Athletic performance' };
+const GOAL_LABELS = { build: 'Build muscle', lose: 'Lose fat', fit: 'Get fit & lean', athlete: 'Athletic performance', strength: 'Strength', endurance: 'Endurance' };
 const EXP_LABELS = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' };
 
 const generateMemberPlan = p => {
@@ -885,6 +903,7 @@ const updateAuthLinks = () => {
 const renderProfile = () => {
   if (!document.body.classList.contains('profile-page')) return;
   const gate = document.getElementById('profile-gate');
+  if (!gate) return;
   const view = document.getElementById('profile-view');
   const empty = document.getElementById('profile-empty');
   const training = document.getElementById('profile-training');
@@ -892,7 +911,14 @@ const renderProfile = () => {
   const user = currentUser();
   gate.hidden = !!user;
   view.hidden = !user;
-  if (!user) { empty.hidden = training.hidden = diet.hidden = true; return; }
+  if (!user) {
+    empty.hidden = training.hidden = diet.hidden = true;
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
+      const section = document.getElementById(id);
+      if (section) section.hidden = true;
+    });
+    return;
+  }
 
   document.getElementById('pf-name').textContent = `${user.name.split(' ')[0]}.`;
   const since = new Date(user.createdAt).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
@@ -904,7 +930,16 @@ const renderProfile = () => {
 
   // A pending payment gets a visible, actionable banner instead of a silent lock.
   let banner = document.getElementById('pf-pending');
-  if (pending && !user.plan) {
+  if (user.suspended) {
+    if (!banner) {
+      banner = document.createElement('p');
+      banner.id = 'pf-pending';
+      banner.className = 'pf-pending';
+      document.getElementById('pf-sub').after(banner);
+    }
+    banner.innerHTML = '⛔ <strong>Account suspended</strong> — check-ins and booking are paused. Please contact the front desk.';
+    banner.hidden = false;
+  } else if (pending && !user.plan) {
     if (!banner) {
       banner = document.createElement('p');
       banner.id = 'pf-pending';
@@ -926,6 +961,21 @@ const renderProfile = () => {
     memberGate.hidden = true;
     training.hidden = diet.hidden = true;
     document.getElementById('pf-stats').innerHTML = '';
+    const coachProg = user.activeProgram && user.activeProgram.source === 'coach' ? user.activeProgram : null;
+    if (user.plan && coachProg && coachProg.week) {
+      empty.hidden = true;
+      memberGate.hidden = true;
+      training.hidden = false;
+      document.getElementById('pf-training-note').textContent = `${String(coachProg.name).toUpperCase()} · ASSIGNED BY ${String(coachProg.coach || 'YOUR COACH').toUpperCase()}`;
+      document.getElementById('pf-days').innerHTML = coachProg.week.map(day =>
+        `<div class="pf-day"><div class="pf-day-head"><h4>${esc(day.label)}</h4><span>${esc(day.focus).toUpperCase()}</span></div><ul>${day.items.map(item => `<li>${esc(item)}</li>`).join('')}</ul></div>`
+      ).join('');
+    }
+    if (user.plan && user.customDiet && user.customDiet.meals) {
+      diet.hidden = false;
+      renderDietSection(user);
+    }
+    renderDashboard(user);
     return;
   }
   empty.hidden = true;
@@ -941,16 +991,32 @@ const renderProfile = () => {
   memberGate.hidden = !!user.plan;
   training.hidden = diet.hidden = !user.plan;
   if (!user.plan) return;
-  document.getElementById('pf-training-note').textContent = `${EXP_LABELS[p.experience].toUpperCase()} BLOCK · ${p.days} SESSIONS / WEEK · ADD 2.5 KG OR 1 REP WEEKLY`;
-  document.getElementById('pf-days').innerHTML = p.week.map(day =>
-    `<div class="pf-day"><div class="pf-day-head"><h4>${day.label}</h4><span>${day.focus.toUpperCase()}</span></div><ul>${day.items.map(item => `<li>${item}</li>`).join('')}</ul></div>`
+  const activeProgram = user.activeProgram && user.activeProgram.week ? user.activeProgram : { name: 'My ONYX Plan', week: p.week };
+  document.getElementById('pf-training-note').textContent = `${activeProgram.name.toUpperCase()} \u00b7 ${activeProgram.week.length} SESSIONS / WEEK \u00b7 ADD 2.5 KG OR 1 REP WEEKLY}`;
+  document.getElementById('pf-days').innerHTML = activeProgram.week.map(day =>
+    `<div class="pf-day"><div class="pf-day-head"><h4>${esc(day.label)}</h4><span>${esc(day.focus).toUpperCase()}</span></div><ul>${day.items.map(item => `<li>${esc(item)}</li>`).join('')}</ul></div>`
   ).join('');
 
-  document.getElementById('pf-calories').textContent = p.calories;
-  document.getElementById('pf-protein').textContent = `${p.protein}g`;
-  document.getElementById('pf-meals').innerHTML = p.meals.map(([title, text]) =>
-    `<div class="pf-meal"><h4>${title}</h4><p>${text}</p></div>`
-  ).join('');
+  renderDietSection(user);  const ap = user.activeProgram || {};
+  const coachLine = document.getElementById('pf-coach-note');
+  if (coachLine) {
+    const showCoach = ap.source === 'coach' && ap.coach;
+    coachLine.hidden = !showCoach;
+    if (showCoach) coachLine.textContent = `ASSIGNED BY ${String(ap.coach).toUpperCase()}${ap.assignedAt ? ` · ${fmtDate(ap.assignedAt).toUpperCase()}` : ''} — FOLLOW IT AS WRITTEN; ASK BEFORE SWAPPING DAYS.`;
+  }
+  const prLine = document.getElementById('pf-prs');
+  if (prLine) {
+    const prs = (user.prs || []).slice(-3).reverse();
+    prLine.hidden = !prs.length;
+    if (prs.length) prLine.textContent = `LATEST PRS — ${prs.map(r => `${r.lift} ${r.weight}kg`).join(' · ')}`;
+  }
+  const notesBox = document.getElementById('pf-coach-notes');
+  if (notesBox) {
+    const shared = (user.coachNotes || []).filter(n => n.shared).slice(-3).reverse();
+    notesBox.hidden = !shared.length;
+    notesBox.innerHTML = shared.map(n => `<p><strong>${esc(n.by)} · ${esc(fmtDate(n.at))}</strong>${esc(n.text)}</p>`).join('');
+  }
+  renderDashboard(user);
 };
 
 const retakeButton = document.getElementById('pf-retake');
@@ -964,8 +1030,7 @@ if (logoutButton) logoutButton.addEventListener('click', () => {
   renderProfile();
 });
 
-updateAuthLinks();
-renderProfile();
+/* First paint happens at the end of this file, after all modules load. */
 
 // Duck the floating "Reach out" CTA out of the way when the footer is visible
 (() => {
@@ -977,3 +1042,4206 @@ renderProfile();
     { rootMargin: '0px 0px -12px 0px' }
   ).observe(footer);
 })();
+
+// PT pack buttons: same safe payment entry point as membership plans.
+document.querySelectorAll('[data-pt-plan]').forEach(button => button.addEventListener('click', () => {
+  const plan = button.dataset.ptPlan;
+  const link = PAYMENT_LINKS[plan];
+  if (link) beginPaymentFlow(link, plan);
+}));
+
+/* ===========================================================================
+   MEMBER DASHBOARD — membership card, today's overview, program library.
+   Demo storage: dashboard data lives on the member's user record in
+   localStorage until the backend endpoints replace it (see README).
+   =========================================================================== */
+ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@onyxathletic.club'].
+
+const ONYX_PROGRAMS = [
+  { id: 'onyx-engine', name: 'Fat Loss Engine', goal: 'lose', official: true, builtin: true, author: 'ONYX Coaching Team', week: [
+    { label: 'Day 1', focus: 'Upper strength', items: ['Bench press — 4 × 8', 'Barbell row — 4 × 8', 'Overhead press — 3 × 10', 'Lat pulldown — 3 × 10', 'Bike finisher — 8 min'] },
+    { label: 'Day 2', focus: 'Engine intervals', items: ['Row erg — 6 × 250m', 'Kettlebell swings — 5 × 15', 'Battle ropes — 8 × (20s on / 40s off)', 'Farmer carry — 4 × 30m'] },
+    { label: 'Day 3', focus: 'Lower strength', items: ['Back squat — 4 × 6', 'Romanian deadlift — 3 × 8', 'Walking lunges — 3 × 10 / side', 'Standing calf raise — 3 × 12', 'Rope finisher — 8 min'] },
+    { label: 'Day 4', focus: 'Full-body circuit', items: ['Thrusters — 4 × 10', 'Pull-ups — 4 × max', 'Dips — 3 × 10', 'Hanging leg raise — 3 × 12', 'Sled push — 6 × 20m'] }
+  ] },
+  { id: 'onyx-first-barbell', name: 'First Barbell', goal: 'fit', official: true, builtin: true, author: 'ONYX Coaching Team', week: [
+    { label: 'Day 1', focus: 'Full body A', items: ['Goblet squat — 3 × 10', 'Bench press — 3 × 8', 'Seated row — 3 × 10', 'Plank — 3 × 30s'] },
+    { label: 'Day 2', focus: 'Full body B', items: ['Romanian deadlift — 3 × 8', 'Overhead press — 3 × 8', 'Lat pulldown — 3 × 10', 'Glute bridge — 3 × 12'] },
+    { label: 'Day 3', focus: 'Full body C', items: ['Leg press — 3 × 10', 'Incline dumbbell press — 3 × 10', 'Single-arm dumbbell row — 3 × 10 / side', 'Dead hang — 3 × 20s'] }
+  ] },
+  { id: 'onyx-ppl', name: 'Push · Pull · Legs + Engine', goal: 'build', official: true, builtin: true, author: 'ONYX Coaching Team', week: [
+    { label: 'Day 1', focus: 'Chest + triceps', items: ['Bench press — 4 × 6', 'Incline dumbbell press — 3 × 10', 'Cable fly — 3 × 12', 'Rope pressdown — 3 × 12'] },
+    { label: 'Day 2', focus: 'Back + biceps', items: ['Deadlift — 3 × 5', 'Pull-ups — 4 × 6', 'Barbell row — 3 × 8', 'Incline curl — 3 × 10'] },
+    { label: 'Day 3', focus: 'Legs', items: ['Back squat — 4 × 6', 'Leg press — 3 × 10', 'Seated leg curl — 3 × 12', 'Standing calf raise — 4 × 12'] },
+    { label: 'Day 4', focus: 'Shoulders + arms', items: ['Overhead press — 4 × 6', 'Lateral raise — 4 × 12', 'Rear-delt fly — 3 × 14', 'Barbell curl — 3 × 10'] },
+    { label: 'Day 5', focus: 'Engine + core', items: ['Row — 3 × 1000m', 'Kettlebell swings — 4 × 20', 'Hanging leg raise — 4 × 12', 'Side plank — 3 × 30s / side'] }
+  ] }
+];
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dayKey = (d = new Date()) => d.toLocaleDateString('en-CA');
+const fmtDate = iso => {
+  try { return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
+  catch { return '—'; }
+};
+const planMonths = plan => {
+  if (!plan) return 0;
+  const m = String(plan).match(/^(\d+)\s*months?\s*membership/i);
+  if (m) return parseInt(m[1], 10);
+  if (/^monthly/i.test(plan)) return 1;
+  if (/single PT/i.test(plan)) return 1;
+  if (/PT pack/i.test(plan)) return 3;
+  return 1;
+};
+const addMonths = (date, n) => { const d = new Date(date); d.setMonth(d.getMonth() + n); return d; };
+const isCoach = user => !!user && Array.isArray(ONYX.COACH_EMAILS) &&
+  ONYX.COACH_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+
+const ensureMembershipDates = user => {
+  if (!user || !user.plan) return;
+  if (!user.activatedAt) user.activatedAt = user.createdAt || new Date().toISOString();
+  if (!user.expiresAt) user.expiresAt = addMonths(new Date(user.activatedAt), planMonths(user.plan)).toISOString();
+  saveCurrentUser(user);
+};
+
+const normalizeDash = user => {
+  let changed = false;
+  const ensure = (key, value) => { if (user[key] === undefined) { user[key] = value; changed = true; } };
+  ensure('checkins', []); ensure('foodLog', {}); ensure('stepsLog', {});
+  ensure('goals', []); ensure('customPrograms', []); ensure('workoutDone', {});
+  ensure('threads', {}); ensure('coachPrograms', []); ensure('coachNotes', []);
+  ensure('prs', []); ensure('measurements', []); ensure('sessions', []);
+  ensure('memberReadAt', {}); ensure('coachReadAt', {}); ensure('foodLog', {}); ensure('aiChat', []);
+  if (user.assignedCoach === undefined) { user.assignedCoach = null; changed = true; }
+  if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
+  if (user.mainGoal === undefined) { user.mainGoal = null; changed = true; }
+  if (user.checkinCount === undefined) { user.checkinCount = 0; changed = true; }
+  ensure('notifs', []); ensure('notifSnooze', {}); ensure('notifChalls', []); ensure('availability', {});
+  if (!user.visits) {
+    user.visits = (user.checkins || []).map(d => ({ at: `${d}T12:00:00.000`, method: 'manual' }));
+    changed = true;
+  }
+  if (user.profile && user.profile.week && !user.activeProgram) {
+    user.activeProgram = { name: 'My ONYX Plan', source: 'assessment', week: user.profile.week };
+    changed = true;
+  }
+  if (user.profile && !user.goalsSeeded) {
+    user.goalsSeeded = true; changed = true;
+    user.goals.push({ id: 'g-seed', title: `Reach ${user.profile.target} kg`, target: user.profile.target, unit: 'kg', current: user.profile.weight, done: false });
+  }
+  if (changed) saveCurrentUser(user);
+};
+
+const calcStreak = checkins => {
+  const set = new Set(checkins || []);
+  const d = new Date();
+  if (!set.has(dayKey(d))) d.setDate(d.getDate() - 1);
+  let streak = 0;
+  while (set.has(dayKey(d))) { streak++; d.setDate(d.getDate() - 1); }
+  return streak;
+};
+
+const todaysSession = user => {
+  if (new Date().getDay() === 0) return { rest: true };
+  const program = user.activeProgram && user.activeProgram.week ? user.activeProgram
+    : (user.profile && user.profile.week ? { name: 'My ONYX Plan', week: user.profile.week } : null);
+  if (!program) return null;
+  const start = new Date(new Date().getFullYear(), 0, 0);
+  const doy = Math.floor((Date.now() - start.getTime()) / 86400000);
+  return { rest: false, program: program.name, session: program.week[doy % program.week.length] };
+};
+
+/* ---------- membership card ---------- */
+const renderMembership = user => {
+  const section = document.getElementById('profile-membership');
+  if (!section) return;
+  section.hidden = false;
+  const planEl = document.getElementById('ms-plan');
+  const startEl = document.getElementById('ms-start');
+  const expiryEl = document.getElementById('ms-expiry');
+  const daysEl = document.getElementById('ms-days');
+  const barEl = document.getElementById('ms-bar');
+  const stateEl = document.getElementById('ms-state');
+  const renewEl = document.getElementById('ms-renew');
+  const pendingEl = document.getElementById('ms-pending');
+  const pending = user.pendingPayment;
+  if (!user.plan) {
+    planEl.textContent = 'No active membership';
+    startEl.textContent = expiryEl.textContent = daysEl.textContent = '—';
+    barEl.style.width = '0%';
+    section.classList.remove('is-expiring', 'is-expired');
+    stateEl.textContent = pending
+      ? `Payment for ${pending.plan} is confirming — reference ${pending.ref}.`
+      : 'Pick a plan to unlock your training week, diet plan and programs.';
+    renewEl.querySelector('span').textContent = pending ? 'View plans' : 'Become a member';
+    if (pending) {
+      pendingEl.hidden = false;
+      pendingEl.innerHTML = `Confirming <strong>${esc(pending.plan)}</strong> · ref <strong>${esc(pending.ref)}</strong>`;
+    } else pendingEl.hidden = true;
+    return;
+  }
+  pendingEl.hidden = true;
+  ensureMembershipDates(user);
+  const start = new Date(user.activatedAt);
+  const expiry = new Date(user.expiresAt);
+  const total = Math.max(1, Math.round((expiry - start) / 86400000));
+  const left = Math.ceil((expiry - Date.now()) / 86400000);
+  planEl.textContent = user.plan;
+  startEl.textContent = fmtDate(user.activatedAt);
+  expiryEl.textContent = fmtDate(user.expiresAt);
+  daysEl.textContent = left >= 0 ? `${left} day${left === 1 ? '' : 's'}` : 'Expired';
+  barEl.style.width = `${Math.max(0, Math.min(100, Math.round((left / total) * 100)))}%`;
+  section.classList.toggle('is-expiring', left >= 0 && left <= 7);
+  section.classList.toggle('is-expired', left < 0);
+  stateEl.textContent = left < 0
+    ? 'Your membership has expired — renew to keep training.'
+    : left <= 7 ? 'Expiring soon — renew now so your streak never breaks.'
+    : `${left} days of training ahead. Keep showing up.`;
+  renewEl.querySelector('span').textContent = left < 0 ? 'Renew now' : 'Renew / extend';
+};
+
+/* ---------- today's overview ---------- */
+const renderToday = user => {
+  const section = document.getElementById('profile-today');
+  if (!section) return;
+  section.hidden = false;
+  const today = dayKey();
+  document.getElementById('td-date').textContent =
+    new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' }).toUpperCase();
+
+  // Workout
+  const titleEl = document.getElementById('td-workout-title');
+  const progEl = document.getElementById('td-workout-prog');
+  const listEl = document.getElementById('td-workout-list');
+  const doneBtn = document.getElementById('td-workout-done');
+  const done = !!(user.workoutDone && user.workoutDone[today]);
+  if (!user.plan) {
+    titleEl.textContent = 'Members only';
+    progEl.textContent = 'UNLOCK WITH ANY MEMBERSHIP';
+    listEl.innerHTML = '<li>Your training week, diet plan and programs unlock the moment you join.</li>';
+    doneBtn.disabled = false;
+    doneBtn.textContent = 'View plans';
+    doneBtn.onclick = () => { window.location.href = 'index.html#membership'; };
+  } else {
+    const t = todaysSession(user);
+    if (!t) {
+      titleEl.textContent = 'No program yet';
+      progEl.textContent = 'START WITH THE ASSESSMENT OR LIBRARY';
+      listEl.innerHTML = '<li>Finish your assessment or start a program from the library below.</li>';
+      doneBtn.disabled = true;
+      doneBtn.textContent = 'Nothing scheduled';
+      doneBtn.onclick = null;
+    } else if (t.rest) {
+      titleEl.textContent = 'Rest day';
+      progEl.textContent = 'SUNDAY · THE FLOOR IS CLOSED';
+      listEl.innerHTML = '<li>Sleep, walk, stretch. Growth happens between sessions.</li>';
+      doneBtn.disabled = true;
+      doneBtn.textContent = 'Rest well';
+      doneBtn.onclick = null;
+    } else {
+      titleEl.textContent = t.session.focus;
+      progEl.textContent = `${t.session.label.toUpperCase()} · ${String(t.program).toUpperCase()}`;
+      listEl.innerHTML = t.session.items.map(item => `<li>${esc(item)}</li>`).join('');
+      doneBtn.disabled = done;
+      doneBtn.textContent = done ? 'Done ✓' : 'Mark done';
+      doneBtn.onclick = () => {
+        user.workoutDone[today] = true;
+        if (!user.checkins.includes(today)) user.checkins.push(today);
+        saveCurrentUser(user);
+        renderToday(user);
+      };
+    }
+  }
+
+  // Calories
+  const target = (user.profile && user.profile.calories) || 2200;
+  const entries = (user.foodLog && user.foodLog[today]) || [];
+  const eaten = entries.reduce((sum, e) => sum + (parseInt(e.kcal, 10) || 0), 0);
+  document.getElementById('td-cal-left').textContent = Math.max(0, target - eaten).toLocaleString('en-IN');
+  document.getElementById('td-cal-sub').textContent = `${eaten.toLocaleString('en-IN')} EATEN · ${target.toLocaleString('en-IN')} TARGET`;
+  document.getElementById('td-cal-bar').style.width = `${Math.min(100, Math.round((eaten / target) * 100))}%`;
+  document.getElementById('td-food-list').innerHTML = entries.length
+    ? entries.map((e, i) => `<li><span>${esc(e.label)}</span><span>${esc(String(e.kcal))} kcal <button type="button" data-food-del="${i}" aria-label="Remove ${esc(e.label)}">×</button></span></li>`).join('')
+    : '<li class="log-empty">Nothing logged yet today.</li>';
+
+  // Steps
+  const steps = (user.stepsLog && user.stepsLog[today]) || 0;
+  document.getElementById('td-steps-count').textContent = steps.toLocaleString('en-IN');
+  document.getElementById('td-steps-bar').style.width = `${Math.min(100, Math.round((steps / 10000) * 100))}%`;
+
+  // Attendance
+  const checkins = user.checkins || [];
+  const checked = checkins.includes(today);
+  document.getElementById('td-streak').textContent = calcStreak(checkins);
+  const monthPrefix = today.slice(0, 7);
+  document.getElementById('td-month').textContent =
+    `${checkins.filter(d => d.startsWith(monthPrefix)).length} CHECK-INS THIS MONTH · ${checkins.length} ALL TIME`;
+  const dots = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = dayKey(d);
+    dots.push(`<span class="${checkins.includes(key) ? 'is-on' : ''}" title="${key}"></span>`);
+  }
+  document.getElementById('td-dots').innerHTML = dots.join('');
+  const checkinBtn = document.getElementById('td-checkin');
+  checkinBtn.disabled = checked;
+  checkinBtn.textContent = checked ? 'Checked in ✓' : 'Check in at gym';
+  checkinBtn.onclick = () => {
+    if (!user.checkins.includes(today)) user.checkins.push(today);
+    saveCurrentUser(user);
+    renderToday(user);
+  };
+
+  // Goals
+  const goals = user.goals || [];
+  document.getElementById('td-goal-list').innerHTML = goals.length
+    ? goals.map(g => {
+        const pct = g.target > 0 ? Math.max(0, Math.min(100, Math.round((g.current / g.target) * 100))) : 0;
+        return `<li class="goal-row${g.done ? ' is-done' : ''}"><div><strong>${esc(g.title)}</strong>` +
+          `<span>${esc(String(g.current))} / ${esc(String(g.target))} ${esc(g.unit)}</span>` +
+          `<div class="today-bar goal-bar"><i style="width:${pct}%"></i></div></div>` +
+          `<div class="goal-actions"><button type="button" data-goal="${g.id}" data-act="down" aria-label="Decrease">−</button>` +
+          `<button type="button" data-goal="${g.id}" data-act="up" aria-label="Increase">+</button>` +
+          `<button type="button" data-goal="${g.id}" data-act="done" aria-label="Toggle done">✓</button>` +
+          `<button type="button" data-goal="${g.id}" data-act="del" aria-label="Delete">×</button></div></li>`;
+      }).join('')
+    : '<li class="log-empty">No goals yet — set your first one below.</li>';
+};
+
+/* ---------- program library + builder ---------- */
+const expandedLib = new Set();
+const allPrograms = user => [...ONYX_PROGRAMS, ...(user.customPrograms || [])];
+
+const renderLibrary = user => {
+  const section = document.getElementById('profile-library');
+  if (!section) return;
+  section.hidden = false;
+  const coach = isCoach(user);
+  document.getElementById('coach-banner').hidden = !coach;
+  document.getElementById('lib-grid').innerHTML = allPrograms(user).map(p => {
+    const isActive = !!(user.activeProgram && user.activeProgram.id && user.activeProgram.id === p.id);
+    const open = expandedLib.has(p.id);
+    const canDelete = !p.builtin && (coach || p.email === user.email);
+    return `<article class="lib-card${p.official ? ' is-official' : ''}${isActive ? ' is-active' : ''}">` +
+      `<span class="lib-tag">${p.official ? 'ONYX OFFICIAL' : 'COMMUNITY'} · ${esc((GOAL_LABELS[p.goal] || p.goal || '').toUpperCase())} · ${p.week.length} DAYS/WK</span>` +
+      `<h3>${esc(p.name)}</h3><p class="lib-by">by ${esc(p.author || 'ONYX')}</p>` +
+      (open ? `<div class="lib-week">${p.week.map(d =>
+        `<div><h4>${esc(d.label)} — ${esc(d.focus)}</h4><ul>${d.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`
+      ).join('')}</div>` : '') +
+      `<div class="lib-actions"><button type="button" data-lib="${p.id}" data-act="preview">${open ? 'Hide' : 'Preview'}</button>` +
+      (isActive
+        ? '<button type="button" disabled>Active ✓</button>'
+        : `<button type="button" data-lib="${p.id}" data-act="start">Start program</button>`) +
+      (coach && !p.builtin ? `<button type="button" data-lib="${p.id}" data-act="official">${p.official ? 'Unofficial' : 'Make official'}</button>` : '') +
+      (canDelete ? `<button type="button" data-lib="${p.id}" data-act="del">Delete</button>` : '') +
+      '</div></article>';
+  }).join('');
+  document.getElementById('lib-build').onclick = () => {
+    builderGoal = '';
+    document.querySelectorAll('#builder-chips button').forEach(b => b.classList.remove('is-on'));
+    document.getElementById('builder-error').hidden = true;
+    document.getElementById('builder-form').reset();
+    renderBuilderDays(4);
+    document.getElementById('builder-dialog').showModal();
+  };
+};
+
+let builderGoal = '';
+const renderBuilderDays = count => {
+  const wrap = document.getElementById('builder-days');
+  if (!wrap) return;
+  wrap.innerHTML = Array.from({ length: count }, (_, i) =>
+    `<div class="builder-day" data-day="${i}"><span class="field-label">DAY ${i + 1} FOCUS</span>` +
+    `<input name="focus-${i}" maxlength="40" placeholder="e.g. Upper strength" />` +
+    `<div class="ex-list" id="ex-list-${i}"></div>` +
+    `<button type="button" class="builder-add" data-add-ex="${i}">+ Add exercise</button></div>`
+  ).join('');
+  for (let i = 0; i < count; i++) addExerciseRow(i);
+};
+const addExerciseRow = day => {
+  const list = document.getElementById(`ex-list-${day}`);
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'ex-row';
+  row.innerHTML = '<input maxlength="60" placeholder="Exercise — e.g. Bench press" aria-label="Exercise name" />' +
+    '<input inputmode="numeric" maxlength="3" placeholder="Sets" aria-label="Sets" />' +
+    '<input maxlength="12" placeholder="Reps — 8" aria-label="Reps" />' +
+    '<button type="button" aria-label="Remove exercise">×</button>';
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  list.appendChild(row);
+};
+
+const renderDashboard = user => {
+  if (!document.body.classList.contains('profile-page')) return;
+  if (!user) return;
+  normalizeDash(user);
+  renderMembership(user);
+  renderToday(user);
+  renderLibrary(user);
+  renderGoals(user);
+  renderAttendance(user);
+  renderNotifs(user);
+  renderChallenges(user);
+  renderBooking(user);
+  renderCoachSection(user);
+  renderProgress(user).catch(() => {});
+};
+
+/* ---------- dashboard events (bound once) ---------- */
+(() => {
+  const foodForm = document.getElementById('td-food-form');
+  if (foodForm) foodForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const label = foodForm.elements.food.value.trim().slice(0, 40);
+    const kcal = parseInt(foodForm.elements.kcal.value, 10);
+    if (!label || !(kcal > 0)) return;
+    const today = dayKey();
+    user.foodLog[today] = user.foodLog[today] || [];
+    user.foodLog[today].push({ label, kcal });
+    saveCurrentUser(user);
+    foodForm.reset();
+    renderToday(user);
+  });
+
+  const foodList = document.getElementById('td-food-list');
+  if (foodList) foodList.addEventListener('click', event => {
+    const btn = event.target.closest('[data-food-del]');
+    if (!btn) return;
+    const user = currentUser();
+    if (!user) return;
+    const entries = user.foodLog[dayKey()] || [];
+    entries.splice(parseInt(btn.dataset.foodDel, 10), 1);
+    saveCurrentUser(user);
+    renderToday(user);
+  });
+
+  const stepsForm = document.getElementById('td-steps-form');
+  if (stepsForm) stepsForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const val = parseInt(stepsForm.elements.steps.value, 10);
+    if (!(val > 0)) return;
+    const today = dayKey();
+    user.stepsLog[today] = (user.stepsLog[today] || 0) + val;
+    saveCurrentUser(user);
+    stepsForm.reset();
+    renderToday(user);
+  });
+
+  const goalForm = document.getElementById('td-goal-form');
+  if (goalForm) goalForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const title = goalForm.elements.title.value.trim().slice(0, 50);
+    const target = parseFloat(goalForm.elements.target.value);
+    const unit = goalForm.elements.unit.value.trim().slice(0, 10) || 'units';
+    if (!title || !(target > 0)) return;
+    user.goals.push({ id: 'g' + Date.now().toString(36), title, target, unit, current: 0, done: false });
+    saveCurrentUser(user);
+    goalForm.reset();
+    renderToday(user);
+  });
+
+  const goalList = document.getElementById('td-goal-list');
+  if (goalList) goalList.addEventListener('click', event => {
+    const btn = event.target.closest('[data-goal]');
+    if (!btn) return;
+    const user = currentUser();
+    if (!user) return;
+    const goal = (user.goals || []).find(g => g.id === btn.dataset.goal);
+    if (!goal) return;
+    const step = goal.target >= 100 ? 5 : 1;
+    if (btn.dataset.act === 'up') goal.current = Math.round((goal.current + step) * 10) / 10;
+    if (btn.dataset.act === 'down') goal.current = Math.max(0, Math.round((goal.current - step) * 10) / 10);
+    if (btn.dataset.act === 'done') goal.done = !goal.done;
+    if (btn.dataset.act === 'del') user.goals = user.goals.filter(g => g.id !== goal.id);
+    saveCurrentUser(user);
+    renderToday(user);
+  });
+
+  const libGrid = document.getElementById('lib-grid');
+  if (libGrid) libGrid.addEventListener('click', event => {
+    const btn = event.target.closest('[data-lib]');
+    if (!btn) return;
+    const user = currentUser();
+    if (!user) return;
+    const id = btn.dataset.lib;
+    const program = allPrograms(user).find(p => p.id === id);
+    if (!program) return;
+    if (btn.dataset.act === 'preview') {
+      if (expandedLib.has(id)) expandedLib.delete(id); else expandedLib.add(id);
+      renderLibrary(user);
+    }
+    if (btn.dataset.act === 'start') {
+      if (!user.plan) { window.location.href = 'index.html#membership'; return; }
+      user.activeProgram = { id: program.id, name: program.name, source: program.builtin ? 'library' : 'custom', week: JSON.parse(JSON.stringify(program.week)) };
+      saveCurrentUser(user);
+      renderProfile();
+    }
+    if (btn.dataset.act === 'del') {
+      user.customPrograms = (user.customPrograms || []).filter(p => p.id !== id);
+      if (user.activeProgram && user.activeProgram.id === id) user.activeProgram = null;
+      saveCurrentUser(user);
+      renderProfile();
+    }
+    if (btn.dataset.act === 'official' && isCoach(user)) {
+      program.official = !program.official;
+      saveCurrentUser(user);
+      renderLibrary(user);
+    }
+  });
+
+  const builderDialog = document.getElementById('builder-dialog');
+  if (builderDialog) {
+    builderDialog.addEventListener('click', event => {
+      if (event.target === builderDialog) builderDialog.close();
+      const addBtn = event.target.closest('[data-add-ex]');
+      if (addBtn) addExerciseRow(parseInt(addBtn.dataset.addEx, 10));
+    });
+    document.getElementById('builder-chips').addEventListener('click', event => {
+      const chip = event.target.closest('button[data-value]');
+      if (!chip) return;
+      builderGoal = chip.dataset.value;
+      document.querySelectorAll('#builder-chips button').forEach(b => b.classList.toggle('is-on', b === chip));
+    });
+    const bdays = builderDialog.querySelector('select[name="bdays"]');
+    if (bdays) bdays.addEventListener('change', () => renderBuilderDays(parseInt(bdays.value, 10)));
+    document.getElementById('builder-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const user = currentUser();
+      if (!user) return;
+      const errorEl = document.getElementById('builder-error');
+      const fail = message => { errorEl.textContent = message; errorEl.hidden = !message; };
+      const form = event.target;
+      const name = form.elements.bname.value.trim().slice(0, 50);
+      if (name.length < 3) return fail('Give your program a name (3+ characters).');
+      if (!builderGoal) return fail('Pick a goal for this program.');
+      const count = parseInt(form.elements.bdays.value, 10);
+      const week = [];
+      for (let i = 0; i < count; i++) {
+        const focus = form.elements[`focus-${i}`].value.trim().slice(0, 40);
+        if (!focus) return fail(`Day ${i + 1} needs a focus (e.g. Upper strength).`);
+        const rows = [...document.querySelectorAll(`#ex-list-${i} .ex-row`)];
+        const items = rows.map(row => {
+          const [ex, sets, reps] = [...row.querySelectorAll('input')].map(input => input.value.trim());
+          return ex && sets && reps ? `${ex} — ${sets} × ${reps}` : null;
+        }).filter(Boolean);
+        if (!items.length) return fail(`Day ${i + 1} needs at least one complete exercise.`);
+        week.push({ label: `Day ${i + 1}`, focus, items });
+      }
+      fail('');
+      const coach = isCoach(user);
+      user.customPrograms.push({
+        id: 'c' + Date.now().toString(36), name, goal: builderGoal, week,
+        official: coach, builtin: false, author: coach ? `Coach ${user.name.split(' ')[0]}` : user.name,
+        email: user.email, createdAt: new Date().toISOString()
+      });
+      saveCurrentUser(user);
+      builderDialog.close();
+      renderLibrary(user);
+      if (document.body.classList.contains('coach-page')) refreshCoach();
+    });
+  }
+})();
+
+/* ===========================================================================
+   TRANSFORMATION TRACKING — on-device photo vault (IndexedDB), week timeline,
+   before/after compare, weight trend. Photos never leave this browser until
+   the backend member cloud replaces local storage.
+   =========================================================================== */
+const PRIVACY_LABELS = { private: 'PRIVATE', coaches: 'COACHES', public: 'FEATURE ME' };
+
+const ProgressDB = {
+  db: null,
+  open() {
+    return new Promise((resolve, reject) => {
+      if (this.db) return resolve(this.db);
+      if (!('indexedDB' in window)) return reject(new Error('no-idb'));
+      const req = indexedDB.open('onyx_progress', 1);
+      req.onupgradeneeded = () => {
+        const store = req.result.createObjectStore('entries', { keyPath: 'id' });
+        store.createIndex('email', 'email', { unique: false });
+      };
+      req.onsuccess = () => { this.db = req.result; resolve(this.db); };
+      req.onerror = () => reject(req.error || new Error('idb-open'));
+    });
+  },
+  all(email) {
+    return this.open().then(db => new Promise((resolve, reject) => {
+      const out = [];
+      const cursor = db.transaction('entries', 'readonly').objectStore('entries').index('email').openCursor(IDBKeyRange.only(email));
+      cursor.onsuccess = () => {
+        const c = cursor.result;
+        if (c) { out.push(c.value); c.continue(); } else resolve(out);
+      };
+      cursor.onerror = () => reject(cursor.error || new Error('idb-read'));
+    }));
+  },
+  put(entry) {
+    return this.open().then(db => new Promise((resolve, reject) => {
+      const t = db.transaction('entries', 'readwrite');
+      t.objectStore('entries').put(entry);
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error || new Error('idb-write'));
+    }));
+  },
+  del(id) {
+    return this.open().then(db => new Promise((resolve, reject) => {
+      const t = db.transaction('entries', 'readwrite');
+      t.objectStore('entries').delete(id);
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error || new Error('idb-del'));
+    }));
+  },
+  clearUser(email) {
+    return this.open().then(db => new Promise((resolve, reject) => {
+      const t = db.transaction('entries', 'readwrite');
+      const store = t.objectStore('entries');
+      const cursor = store.index('email').openCursor(IDBKeyRange.only(email));
+      cursor.onsuccess = () => {
+        const c = cursor.result;
+        if (c) { store.delete(c.primaryKey); c.continue(); }
+      };
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error || new Error('idb-wipe'));
+    }));
+  }
+};
+
+const processPhoto = file => new Promise((resolve, reject) => {
+  if (!file || !file.type.startsWith('image/')) return reject(new Error('not-image'));
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const max = 900;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(b => (b ? resolve(b) : reject(new Error('encode-fail'))), 'image/jpeg', 0.72);
+    } catch (err) { URL.revokeObjectURL(url); reject(err); }
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('load-fail')); };
+  img.src = url;
+});
+
+const photoURLs = new Set();
+const photoURL = blob => {
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  photoURLs.add(url);
+  return url;
+};
+const revokePhotos = () => { photoURLs.forEach(u => URL.revokeObjectURL(u)); photoURLs.clear(); };
+
+let progressCache = [];
+let cmpA = null, cmpB = null, cmpAngle = 'front', cmpPct = 50;
+let activeEntryId = null, pdAngle = 'front';
+let ckFiles = { front: null, side: null, back: null };
+
+const suggestedWeek = user => {
+  const base = new Date(user.activatedAt || user.createdAt || Date.now()).getTime();
+  return Math.max(1, Math.min(16, Math.floor((Date.now() - base) / (7 * 86400000)) + 1));
+};
+const entryLabel = e => `Week ${e.week} · ${fmtDate(e.dateISO)}`;
+
+const renderProgress = async user => {
+  const section = document.getElementById('profile-progress');
+  if (!section || !user) return;
+  section.hidden = false;
+  if (user.discreetMode === undefined) { user.discreetMode = true; saveCurrentUser(user); }
+  const discreetBox = document.getElementById('pg-discreet');
+  if (discreetBox) discreetBox.checked = !!user.discreetMode;
+  document.body.classList.toggle('pg-discreet', !!user.discreetMode);
+  let entries = [];
+  try {
+    entries = await ProgressDB.all(user.email);
+  } catch (err) {
+    document.getElementById('pg-milestones').innerHTML =
+      '<p class="pg-fallback">Photo vault unavailable in this browser mode (private windows block storage). Your check-ins will work in a regular window.</p>';
+    return;
+  }
+  entries.sort((a, b) => a.week - b.week || (a.dateISO < b.dateISO ? -1 : 1));
+  revokePhotos();
+  entries.forEach(e => {
+    e._urls = {
+      front: photoURL(e.photos && e.photos.front),
+      side: photoURL(e.photos && e.photos.side),
+      back: photoURL(e.photos && e.photos.back)
+    };
+  });
+  progressCache = entries;
+
+  // Milestones: Week 1 → 4 → 8 → 12
+  const byWeek = {};
+  entries.forEach(e => { byWeek[e.week] = e; });
+  document.getElementById('pg-milestones').innerHTML = [1, 4, 8, 12].map((w, i) => {
+    const e = byWeek[w];
+    const thumb = e ? (e._urls.front || e._urls.side || e._urls.back) : null;
+    return `<div class="pg-mile-step"><button type="button" class="pg-slot${e ? '' : ' is-empty'}" data-mile="${w}">` +
+      (thumb ? `<img src="${thumb}" alt="Week ${w} progress photo" loading="lazy" />`
+        : `<span class="pg-slot-empty">W${w}</span>`) +
+      `</button><div class="pg-mile-cap"><strong>WEEK ${w}</strong><span>${e ? `${esc(fmtDate(e.dateISO))}${e.weight ? ` · ${esc(String(e.weight))} KG` : ''}` : 'Not logged yet'}</span></div>` +
+      (i < 3 ? '<i class="pg-arrow" aria-hidden="true">→</i>' : '') + '</div>';
+  }).join('');
+
+  document.getElementById('pg-chips').innerHTML = entries.length
+    ? entries.map(e => `<button type="button" data-entry="${e.id}" class="${e.id === activeEntryId ? 'is-on' : ''}">W${e.week}</button>`).join('')
+    : '<span class="pg-none">No check-ins yet.</span>';
+
+  // Weight trend
+  const weighed = entries.filter(e => e.weight > 0);
+  const chartWrap = document.getElementById('pg-chart-wrap');
+  if (weighed.length >= 2) {
+    chartWrap.hidden = false;
+    const W = 600, H = 160, padL = 8, padB = 22, padT = 16;
+    const weights = weighed.map(e => e.weight);
+    let min = Math.min(...weights), max = Math.max(...weights);
+    if (max - min < 2) { min -= 1; max += 1; }
+    const x = i => padL + (i * (W - padL * 2)) / Math.max(1, weighed.length - 1);
+    const y = v => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+    const pts = weighed.map((e, i) => `${x(i).toFixed(1)},${y(e.weight).toFixed(1)}`).join(' ');
+    document.getElementById('pg-chart').innerHTML =
+      `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight trend chart">` +
+      `<polyline points="${pts}" fill="none" stroke="var(--lime)" stroke-width="2" />` +
+      weighed.map((e, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(e.weight).toFixed(1)}" r="4" fill="var(--lime)" />` +
+        `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">W${e.week}</text>`).join('') +
+      `<text x="${padL}" y="${padT - 5}">${esc(String(max))} kg max</text></svg>` +
+      `<p class="chart-sub">FIRST ${esc(String(weighed[0].weight))} KG → LATEST ${esc(String(weighed[weighed.length - 1].weight))} KG</p>`;
+  } else chartWrap.hidden = true;
+
+  // Compare defaults: earliest vs latest
+  const ids = entries.map(e => e.id);
+  if (!ids.includes(cmpA)) cmpA = ids[0] || null;
+  if (!ids.includes(cmpB)) cmpB = ids[ids.length - 1] || null;
+  const opts = entries.map(e => `<option value="${e.id}">${esc(entryLabel(e))}</option>`).join('');
+  const selA = document.getElementById('cmp-a');
+  const selB = document.getElementById('cmp-b');
+  selA.innerHTML = opts; selB.innerHTML = opts;
+  if (cmpA) selA.value = cmpA;
+  if (cmpB) selB.value = cmpB;
+  renderCompare();
+};
+
+const renderCompare = () => {
+  const frame = document.getElementById('cmp-frame');
+  if (!frame) return;
+  const a = progressCache.find(e => e.id === cmpA);
+  const b = progressCache.find(e => e.id === cmpB);
+  const empty = document.getElementById('cmp-empty');
+  const hasPhotos = progressCache.some(e => e._urls && (e._urls.front || e._urls.side || e._urls.back));
+  const ready = !!(a && b && hasPhotos);
+  empty.hidden = ready;
+  frame.style.display = ready ? '' : 'none';
+  document.getElementById('cmp-range').style.display = ready ? '' : 'none';
+  if (!ready) return;
+  const urlA = a._urls[cmpAngle], urlB = b._urls[cmpAngle];
+  const layerA = document.getElementById('cmp-layer-before');
+  const layerB = document.getElementById('cmp-layer-after');
+  layerA.classList.toggle('is-empty', !urlA);
+  layerB.classList.toggle('is-empty', !urlB);
+  layerA.style.backgroundImage = urlA ? `url("${urlA}")` : 'none';
+  layerB.style.backgroundImage = urlB ? `url("${urlB}")` : 'none';
+  layerA.innerHTML = urlA ? '' : '<span>NO PHOTO</span>';
+  layerB.innerHTML = urlB ? '' : '<span>NO PHOTO</span>';
+  document.getElementById('cmp-label-a').textContent = `W${a.week} · ${cmpAngle.toUpperCase()}`;
+  document.getElementById('cmp-label-b').textContent = `W${b.week} · ${cmpAngle.toUpperCase()}`;
+  syncCompare();
+};
+const syncCompare = () => {
+  const top = document.getElementById('cmp-layer-after');
+  const handle = document.getElementById('cmp-handle');
+  const range = document.getElementById('cmp-range');
+  if (!top || !handle) return;
+  top.style.clipPath = `inset(0 0 0 ${cmpPct}%)`;
+  handle.style.left = `${cmpPct}%`;
+  if (range && document.activeElement !== range) range.value = cmpPct;
+};
+
+const syncEntryPhoto = () => {
+  const e = progressCache.find(x => x.id === activeEntryId);
+  const img = document.getElementById('pd-img');
+  const fig = document.getElementById('pd-photo');
+  const cap = document.getElementById('pd-cap');
+  const url = e && e._urls ? e._urls[pdAngle] : null;
+  fig.classList.toggle('is-empty', !url);
+  img.style.display = url ? '' : 'none';
+  img.src = url || '';
+  img.alt = e ? `Week ${e.week} ${pdAngle} progress photo` : 'Progress photo';
+  fig.classList.remove('revealed');
+  cap.textContent = url ? 'Tap to reveal' : 'No photo for this angle';
+};
+const syncEntryPrivacy = () => {
+  const e = progressCache.find(x => x.id === activeEntryId);
+  if (!e) return;
+  document.getElementById('pd-privacy').innerHTML =
+    `VISIBILITY: <strong>${PRIVACY_LABELS[e.privacy] || 'PRIVATE'}</strong>`;
+};
+const openEntry = id => {
+  const e = progressCache.find(x => x.id === id);
+  if (!e) return;
+  activeEntryId = id;
+  pdAngle = 'front';
+  document.querySelectorAll('#pd-angles button').forEach(b => b.classList.toggle('is-on', b.dataset.pdAngle === 'front'));
+  syncEntryPhoto();
+  document.getElementById('pd-title').innerHTML = `Week<br /><em>${e.week}.</em>`;
+  document.getElementById('pd-meta').textContent =
+    `${fmtDate(e.dateISO).toUpperCase()}${e.weight ? ` · ${e.weight} KG` : ''}`;
+  document.getElementById('pd-note').textContent = e.note || '';
+  document.getElementById('pd-note').hidden = !e.note;
+  syncEntryPrivacy();
+  document.querySelectorAll('#pg-chips button').forEach(btn => btn.classList.toggle('is-on', btn.dataset.entry === id));
+  document.getElementById('progress-dialog').showModal();
+};
+
+const openCheckin = (presetWeek, existing) => {
+  const user = currentUser();
+  if (!user) return;
+  const form = document.getElementById('checkin-form');
+  form.reset();
+  ckFiles = { front: null, side: null, back: null };
+  ['front', 'side', 'back'].forEach(k => {
+    document.getElementById(`ck-${k}`).value = '';
+    const prev = document.getElementById(`ck-${k}-prev`);
+    prev.classList.remove('has-img');
+    prev.innerHTML = `<b>${k.toUpperCase()}</b><i>${existing && existing.photos && existing.photos[k] ? 'Kept — tap to replace' : 'Tap to upload'}</i>`;
+  });
+  const weekSel = document.getElementById('ck-week');
+  weekSel.innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">Week ${i + 1}</option>`).join('');
+  const logged = new Set(progressCache.map(e => e.week));
+  [...weekSel.options].forEach(o => {
+    if (logged.has(parseInt(o.value, 10))) o.textContent += ' · logged';
+  });
+  weekSel.value = (existing && existing.week) || presetWeek || suggestedWeek(user);
+  if (existing) weekSel.disabled = true; else weekSel.disabled = false;
+  document.getElementById('ck-date').value = existing ? (existing.dateISO || '').slice(0, 10) : dayKey();
+  document.getElementById('ck-weight').value = (existing && existing.weight) || (user.profile && user.profile.weight) || '';
+  document.getElementById('ck-note').value = (existing && existing.note) || '';
+  if (existing) {
+    const radio = form.querySelector(`input[name="ck-privacy"][value="${existing.privacy}"]`);
+    if (radio) radio.checked = true;
+  }
+  document.getElementById('checkin-error').hidden = true;
+  document.getElementById('checkin-title').innerHTML = existing ? `Update<br /><em>week ${existing.week}.</em>` : `Log your<br /><em>week.</em>`;
+  form.dataset.editing = existing ? existing.id : '';
+  document.getElementById('checkin-dialog').showModal();
+};
+
+/* ---------- transformation events (bound once) ---------- */
+(() => {
+  const logBtn = document.getElementById('pg-log');
+  if (logBtn) logBtn.addEventListener('click', () => openCheckin());
+
+  const wipeBtn = document.getElementById('pg-wipe');
+  if (wipeBtn) wipeBtn.addEventListener('click', async () => {
+    const user = currentUser();
+    if (!user || !progressCache.length) return;
+    if (!window.confirm(`Delete all ${progressCache.length} check-ins and photos? This cannot be undone.`)) return;
+    try { await ProgressDB.clearUser(user.email); } catch (err) { /* vault unavailable */ }
+    cmpA = cmpB = null;
+    activeEntryId = null;
+    await renderProgress(user).catch(() => {});
+  });
+
+  const discreet = document.getElementById('pg-discreet');
+  if (discreet) discreet.addEventListener('change', () => {
+    const user = currentUser();
+    if (!user) return;
+    user.discreetMode = discreet.checked;
+    saveCurrentUser(user);
+    document.body.classList.toggle('pg-discreet', discreet.checked);
+  });
+
+  const miles = document.getElementById('pg-milestones');
+  if (miles) miles.addEventListener('click', event => {
+    const btn = event.target.closest('[data-mile]');
+    if (!btn) return;
+    const w = parseInt(btn.dataset.mile, 10);
+    const e = progressCache.find(x => x.week === w);
+    if (e) openEntry(e.id); else openCheckin(w);
+  });
+
+  const chips = document.getElementById('pg-chips');
+  if (chips) chips.addEventListener('click', event => {
+    const btn = event.target.closest('[data-entry]');
+    if (btn) openEntry(btn.dataset.entry);
+  });
+
+  const selA = document.getElementById('cmp-a');
+  const selB = document.getElementById('cmp-b');
+  if (selA) selA.addEventListener('change', () => { cmpA = selA.value; renderCompare(); });
+  if (selB) selB.addEventListener('change', () => { cmpB = selB.value; renderCompare(); });
+  const angles = document.getElementById('cmp-angles');
+  if (angles) angles.addEventListener('click', event => {
+    const btn = event.target.closest('[data-cmp-angle]');
+    if (!btn) return;
+    cmpAngle = btn.dataset.cmpAngle;
+    angles.querySelectorAll('button').forEach(b => b.classList.toggle('is-on', b === btn));
+    renderCompare();
+  });
+  const frame = document.getElementById('cmp-frame');
+  if (frame) {
+    let dragging = false;
+    const setPct = clientX => {
+      const rect = frame.getBoundingClientRect();
+      cmpPct = Math.max(0, Math.min(100, Math.round(((clientX - rect.left) / rect.width) * 100)));
+      syncCompare();
+    };
+    frame.addEventListener('pointerdown', event => {
+      if (document.body.classList.contains('pg-discreet') && !frame.classList.contains('revealed')) {
+        frame.classList.add('revealed');
+        return;
+      }
+      dragging = true;
+      if (frame.setPointerCapture) { try { frame.setPointerCapture(event.pointerId); } catch (err) { /* noop */ } }
+      setPct(event.clientX);
+    });
+    frame.addEventListener('pointermove', event => { if (dragging) setPct(event.clientX); });
+    frame.addEventListener('pointerup', () => { dragging = false; });
+    frame.addEventListener('pointercancel', () => { dragging = false; });
+  }
+  const range = document.getElementById('cmp-range');
+  if (range) range.addEventListener('input', () => { cmpPct = parseInt(range.value, 10); syncCompare(); });
+
+  ['front', 'side', 'back'].forEach(k => {
+    const input = document.getElementById(`ck-${k}`);
+    if (!input) return;
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      const prev = document.getElementById(`ck-${k}-prev`);
+      const errorEl = document.getElementById('checkin-error');
+      if (!file) return;
+      try {
+        const blob = await processPhoto(file);
+        ckFiles[k] = blob;
+        prev.classList.add('has-img');
+        prev.innerHTML = `<b>${k.toUpperCase()}</b><img src="${URL.createObjectURL(blob)}" alt="${k} preview" />`;
+        errorEl.hidden = true;
+      } catch (err) {
+        input.value = '';
+        errorEl.textContent = 'That file could not be read as a photo — try another.';
+        errorEl.hidden = false;
+      }
+    });
+  });
+
+  const checkinForm = document.getElementById('checkin-form');
+  if (checkinForm) checkinForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const form = event.target;
+    const errorEl = document.getElementById('checkin-error');
+    const fail = message => { errorEl.textContent = message; errorEl.hidden = !message; };
+    const week = parseInt(form.elements['ck-week'].value, 10);
+    const dateVal = document.getElementById('ck-date').value || dayKey();
+    const weightRaw = parseFloat(document.getElementById('ck-weight').value);
+    const note = document.getElementById('ck-note').value.trim().slice(0, 120);
+    const picked = form.querySelector('input[name="ck-privacy"]:checked');
+    const privacy = picked ? picked.value : 'private';
+    const editingId = form.dataset.editing || '';
+    const existing = (editingId && progressCache.find(e => e.id === editingId)) || progressCache.find(e => e.week === week) || null;
+    const photos = {
+      front: ckFiles.front || (existing && existing.photos.front) || null,
+      side: ckFiles.side || (existing && existing.photos.side) || null,
+      back: ckFiles.back || (existing && existing.photos.back) || null
+    };
+    if (!photos.front && !photos.side && !photos.back) return fail('Add at least one photo — front, side or back.');
+    fail('');
+    const submitBtn = form.querySelector('.auth-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+    try {
+      await ProgressDB.put({
+        id: existing ? existing.id : `${user.email}|w${week}`,
+        email: user.email, week,
+        dateISO: new Date(`${dateVal}T12:00:00`).toISOString(),
+        weight: weightRaw > 0 ? Math.round(weightRaw * 10) / 10 : null,
+        note, privacy, photos, createdAt: existing ? existing.createdAt : new Date().toISOString()
+      });
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save check-in';
+      return fail('Could not save — photo vault unavailable in this browser mode.');
+    }
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Save check-in';
+    user.checkinCount = await ProgressDB.all(user.email).then(e => e.length).catch(() => user.checkinCount || 0);
+    saveCurrentUser(user);
+    document.getElementById('checkin-dialog').close();
+    await renderProgress(user).catch(() => {});
+    renderChallenges(user);
+  });
+
+  const pdAngles = document.getElementById('pd-angles');
+  if (pdAngles) pdAngles.addEventListener('click', event => {
+    const btn = event.target.closest('[data-pd-angle]');
+    if (!btn) return;
+    pdAngle = btn.dataset.pdAngle;
+    pdAngles.querySelectorAll('button').forEach(b => b.classList.toggle('is-on', b === btn));
+    syncEntryPhoto();
+  });
+  const pdPhoto = document.getElementById('pd-photo');
+  if (pdPhoto) pdPhoto.addEventListener('click', () => pdPhoto.classList.toggle('revealed'));
+  const pdCycle = document.getElementById('pd-cycle');
+  if (pdCycle) pdCycle.addEventListener('click', async () => {
+    const user = currentUser();
+    const e = progressCache.find(x => x.id === activeEntryId);
+    if (!user || !e) return;
+    const order = ['private', 'coaches', 'public'];
+    const clean = { ...e };
+    delete clean._urls;
+    clean.privacy = order[(order.indexOf(e.privacy) + 1) % order.length];
+    try { await ProgressDB.put(clean); } catch (err) { /* vault unavailable */ }
+    e.privacy = clean.privacy;
+    syncEntryPrivacy();
+  });
+  const pdCompare = document.getElementById('pd-compare');
+  if (pdCompare) pdCompare.addEventListener('click', () => {
+    if (!activeEntryId) return;
+    cmpB = activeEntryId;
+    if (!cmpA || cmpA === cmpB) {
+      const others = progressCache.map(e => e.id).filter(id => id !== cmpB);
+      cmpA = others[0] || cmpB;
+    }
+    document.getElementById('progress-dialog').close();
+    const selB = document.getElementById('cmp-b');
+    const selA = document.getElementById('cmp-a');
+    if (selB) selB.value = cmpB;
+    if (selA && cmpA) selA.value = cmpA;
+    renderCompare();
+    document.getElementById('pg-compare').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  const pdDownload = document.getElementById('pd-download');
+  if (pdDownload) pdDownload.addEventListener('click', () => {
+    const e = progressCache.find(x => x.id === activeEntryId);
+    const blob = e && e.photos ? e.photos[pdAngle] : null;
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `onyx-week${e.week}-${pdAngle}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  const pdEdit = document.getElementById('pd-edit');
+  if (pdEdit) pdEdit.addEventListener('click', () => {
+    const e = progressCache.find(x => x.id === activeEntryId);
+    if (!e) return;
+    document.getElementById('progress-dialog').close();
+    openCheckin(e.week, e);
+  });
+  const pdDelete = document.getElementById('pd-delete');
+  if (pdDelete) pdDelete.addEventListener('click', async () => {
+    const user = currentUser();
+    if (!user || !activeEntryId) return;
+    if (!window.confirm('Delete this check-in and its photos?')) return;
+    try { await ProgressDB.del(activeEntryId); } catch (err) { /* vault unavailable */ }
+    if (cmpA === activeEntryId) cmpA = null;
+    if (cmpB === activeEntryId) cmpB = null;
+    activeEntryId = null;
+    user.checkinCount = await ProgressDB.all(user.email).then(e => e.length).catch(() => user.checkinCount || 0);
+    saveCurrentUser(user);
+    document.getElementById('progress-dialog').close();
+    await renderProgress(user).catch(() => {});
+    renderChallenges(user);
+  });
+  const progressDialog = document.getElementById('progress-dialog');
+  if (progressDialog) progressDialog.addEventListener('click', event => {
+    if (event.target === progressDialog) progressDialog.close();
+  });
+  const checkinDialog = document.getElementById('checkin-dialog');
+  if (checkinDialog) checkinDialog.addEventListener('click', event => {
+    if (event.target === checkinDialog) checkinDialog.close();
+  });
+})();
+
+// First paint — runs after every module above is defined.
+/* First paint moved to end of file. */
+
+/* ===========================================================================
+   ATTENDANCE SYSTEM — member pass (QR + rotating code), 5 check-in methods,
+   stats, heatmap, 30-day challenge, badges. Demo storage is local; staff PIN
+   and pass codes are demo-grade until the backend replaces them.
+   =========================================================================== */
+ONYX.GYM_LOCATION = ONYX.GYM_LOCATION || { lat: 30.7410, lng: 76.6510, radiusM: 250 }; // TODO: confirm exact gym coords
+ONYX.RECEPTION_PIN = ONYX.RECEPTION_PIN || '2468'; // demo staff PIN — real staff auth needs backend
+
+// QR-ENCODER-START
+/* Minimal QR encoder: byte mode, ECC level L, versions 1-2 (auto-select).
+   Single data block, capacities 17 / 32 bytes. No dependencies. */
+const QR = (() => {
+  const ECC = { 1: 7, 2: 10 };
+  const TOTAL = { 1: 26, 2: 44 };
+  const REM = { 1: 0, 2: 7 };
+  const ALIGN = { 1: [], 2: [6, 18] };
+  const sizeOf = v => 17 + v * 4;
+  const EXP = new Array(512), LOG = new Array(256);
+  (() => { let x = 1; for (let i = 0; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11D; } for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255]; })();
+  const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]];
+  const rsGen = deg => {
+    let poly = [1];
+    for (let i = 0; i < deg; i++) {
+      const next = new Array(poly.length + 1).fill(0);
+      for (let j = 0; j < poly.length; j++) { next[j] ^= poly[j]; next[j + 1] ^= gfMul(poly[j], EXP[i]); }
+      poly = next;
+    }
+    return poly;
+  };
+  const rsRem = (data, gen) => {
+    const res = [...data, ...new Array(gen.length - 1).fill(0)];
+    for (let i = 0; i < data.length; i++) {
+      const coef = res[i];
+      if (coef !== 0) for (let j = 0; j < gen.length; j++) res[i + j] ^= gfMul(gen[j], coef);
+    }
+    return res.slice(data.length);
+  };
+  const bitsOf = (val, len) => { const b = []; for (let i = len - 1; i >= 0; i--) b.push((val >> i) & 1); return b; };
+  const MASKS = [
+    (r, c) => (r + c) % 2 === 0, (r, c) => r % 2 === 0, (r, c) => c % 3 === 0,
+    (r, c) => (r + c) % 3 === 0, (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+    (r, c) => ((r * c) % 2 + (r * c) % 3) === 0,
+    (r, c) => (((r * c) % 2 + (r * c) % 3) % 2) === 0,
+    (r, c) => (((r + c) % 2 + (r * c) % 3) % 2) === 0
+  ];
+  const pen1D = arr => {
+    let s = 0, run = 1;
+    for (let i = 1; i <= arr.length; i++) {
+      if (i < arr.length && arr[i] === arr[i - 1]) run++;
+      else { if (run >= 5) s += 3 + (run - 5); run = 1; }
+    }
+    const pat = [1, 0, 1, 1, 1, 0, 1];
+    for (let i = 0; i + 11 <= arr.length; i++) {
+      const w = arr.slice(i, i + 11);
+      const a = w.slice(0, 4).every(v => !v) && w.slice(4).every((v, k) => !!v === !!pat[k]);
+      const b = w.slice(7).every(v => !v) && w.slice(0, 7).every((v, k) => !!v === !!pat[k]);
+      if (a || b) s += 40;
+    }
+    return s;
+  };
+  const penalty = (mat, size) => {
+    let s = 0;
+    for (let i = 0; i < size; i++) { s += pen1D(mat[i]); s += pen1D(mat.map(row => row[i])); }
+    for (let r = 0; r < size - 1; r++) for (let c = 0; c < size - 1; c++)
+      if (mat[r][c] === mat[r][c + 1] && mat[r][c] === mat[r + 1][c] && mat[r][c] === mat[r + 1][c + 1]) s += 3;
+    let dark = 0;
+    mat.forEach(row => row.forEach(v => { if (v) dark++; }));
+    s += Math.floor(Math.abs((dark / (size * size)) * 100 - 50) / 5) * 10;
+    return s;
+  };
+  const encode = text => {
+    const bytes = [...new TextEncoder().encode(text)];
+    if (bytes.length > 32) throw new Error('qr-too-long');
+    const version = bytes.length <= 17 ? 1 : 2;
+    const size = sizeOf(version);
+    const dataLen = TOTAL[version] - ECC[version];
+    let bits = [0, 1, 0, 0, ...bitsOf(bytes.length, 8)];
+    bytes.forEach(b => bits.push(...bitsOf(b, 8)));
+    bits = bits.concat(new Array(Math.min(4, dataLen * 8 - bits.length)).fill(0));
+    while (bits.length % 8 !== 0) bits.push(0);
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+    for (let pad = 0xEC; data.length < dataLen; pad ^= 0xEC ^ 0x11) data.push(pad);
+    const codewords = data.concat(rsRem(data, rsGen(ECC[version])));
+    const modules = Array.from({ length: size }, () => new Array(size).fill(false));
+    const func = Array.from({ length: size }, () => new Array(size).fill(false));
+    const set = (r, c, v) => { modules[r][c] = !!v; func[r][c] = true; };
+    const finder = (r, c) => {
+      for (let dr = -1; dr <= 7; dr++) for (let dc = -1; dc <= 7; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+        set(rr, cc, (dr >= 0 && dr <= 6 && (dc === 0 || dc === 6)) || (dc >= 0 && dc <= 6 && (dr === 0 || dr === 6)) || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+      }
+    };
+    finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+    ALIGN[version].forEach(r => ALIGN[version].forEach(c => {
+      if (Math.min(r, c) < 9 && (r < 9 || c < 9)) return;
+      if ((r < 9 && c >= size - 8) || (r >= size - 8 && c < 9)) return;
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++)
+        set(r + dr, c + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+    }));
+    for (let i = 8; i < size - 8; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    for (let i = 0; i <= 5; i++) { func[8][i] = true; func[i][8] = true; }
+    func[8][7] = true; func[8][8] = true; func[7][8] = true;
+    for (let i = 0; i < 7; i++) func[size - 1 - i][8] = true;
+    for (let i = 7; i < 15; i++) func[8][size - 15 + i] = true;
+    func[4 * version + 9][8] = true;
+    const allBits = [];
+    codewords.forEach(w => allBits.push(...bitsOf(w, 8)));
+    let bitIdx = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      const upward = ((right + 1) & 2) === 0;
+      for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+        const c = right - j, r = upward ? size - 1 - vert : vert;
+        if (r < 0 || r >= size || func[r][c]) continue;
+        if (bitIdx < allBits.length) modules[r][c] = allBits[bitIdx++] === 1;
+      }
+    }
+    let best = null, bestScore = Infinity, bestMask = 0;
+    for (let m = 0; m < 8; m++) {
+      const trial = modules.map((row, r) => row.map((v, c) => (func[r][c] ? v : (v !== MASKS[m](r, c)))));
+      const score = penalty(trial, size);
+      if (score < bestScore) { bestScore = score; best = trial; bestMask = m; }
+    }
+    const data5 = (1 << 3) | bestMask;
+    let rem = data5;
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >> 9) * 0x537);
+    const bits15 = ((data5 << 10) | rem) ^ 0x5412;
+    const bit = i => ((bits15 >> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) best[8][i] = bit(i);
+    best[8][7] = bit(6); best[8][8] = bit(7); best[7][8] = bit(8);
+    for (let i = 9; i < 15; i++) best[14 - i][8] = bit(i);
+    for (let i = 0; i < 7; i++) best[size - 1 - i][8] = bit(i);
+    for (let i = 7; i < 15; i++) best[8][size - 15 + i] = bit(i);
+    best[4 * version + 9][8] = true;
+    return { version, size, mask: bestMask, modules: best, codewords };
+  };
+  return { encode, _gf: { EXP, LOG }, _tables: { ECC, TOTAL, REM } };
+})();
+// QR-ENCODER-END
+
+const cyrb53 = (str, seed = 0) => {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+};
+const slotNow = () => Math.floor(Date.now() / 30000);
+const memberPass = user => {
+  if (!user.memberId || !user.passSecret) {
+    const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    const pick = n => {
+      const buf = new Uint32Array(n);
+      if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(buf);
+      else for (let i = 0; i < n; i++) buf[i] = Math.floor(Math.random() * 4294967296);
+      return buf;
+    };
+    let id = '';
+    pick(6).forEach(v => { id += abc[v % abc.length]; });
+    let secret = '';
+    pick(4).forEach(v => { secret += v.toString(16).padStart(8, '0'); });
+    user.memberId = 'ONYX-' + id;
+    user.passSecret = secret;
+    saveCurrentUser(user);
+  }
+  return user;
+};
+const passCode = (user, slot) => {
+  const s = slot === undefined ? slotNow() : slot;
+  return String(cyrb53(`${user.passSecret}|${s}`) % 1000000).padStart(6, '0');
+};
+const qrPayload = (user, slot) => {
+  const s = slot === undefined ? slotNow() : slot;
+  return `O1.${user.memberId.slice(5)}.${passCode(user, s)}.${s}`;
+};
+
+const METHOD_LABELS = { manual: 'Manual', reception: 'Reception', geo: 'GPS', nfc: 'NFC', qr: 'QR scan', code: 'Pass code', pt: 'PT session' };
+
+const doCheckin = (method, targetUser) => {
+  const user = targetUser || currentUser();
+  if (!user) return null;
+  if (user.suspended) return { suspended: true, user };
+  user.visits = user.visits || [];
+  user.checkins = user.checkins || [];
+  const now = new Date();
+  const last = user.visits[user.visits.length - 1];
+  if (last && now - new Date(last.at) < 60000) return { dup: true, visit: last, count: user.visits.length, user };
+  const visit = { at: now.toISOString(), method };
+  user.visits.push(visit);
+  const key = dayKey(now);
+  if (!user.checkins.includes(key)) user.checkins.push(key);
+  saveCurrentUser(user);
+  return { visit, count: user.visits.length, user };
+};
+
+const maxStreak = checkins => {
+  const days = [...new Set(checkins || [])].sort();
+  let best = 0, run = 0, prev = null;
+  days.forEach(d => {
+    if (prev && (new Date(d) - new Date(prev)) / 86400000 === 1) run++;
+    else run = 1;
+    prev = d;
+    if (run > best) best = run;
+  });
+  return best;
+};
+
+const attendanceStats = user => {
+  const visits = user.visits || [];
+  const days = new Set((user.checkins || []).map(d => String(d).slice(0, 10)));
+  const start = new Date(user.activatedAt || user.createdAt || Date.now());
+  start.setHours(0, 0, 0, 0);
+  const elapsed = Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1);
+  const pct = Math.min(100, Math.round((days.size / elapsed) * 100));
+  const monthPrefix = dayKey().slice(0, 7);
+  const monthDays = [...days].filter(d => d.startsWith(monthPrefix)).length;
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  let challenge = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    if (days.has(dayKey(d))) challenge++;
+  }
+  return { total: visits.length, distinct: days.size, pct, elapsed, monthDays, daysInMonth, challenge,
+    streak: calcStreak(user.checkins), best: maxStreak(user.checkins) };
+};
+
+const computeBadges = (user, stats) => {
+  const visits = user.visits || [];
+  const early = visits.some(v => new Date(v.at).getHours() < 7);
+  const late = visits.some(v => new Date(v.at).getHours() >= 20);
+  return [
+    { id: 'first', name: 'First session', desc: 'Check in once', earned: stats.total >= 1 },
+    { id: 'streak7', name: 'Week warrior', desc: '7-day streak', earned: stats.best >= 7 },
+    { id: 'challenge', name: '30-day challenge', desc: '30 visits in 30 days', earned: stats.challenge >= 30 },
+    { id: 'fifty', name: 'Half century', desc: '50 total visits', earned: stats.total >= 50 },
+    { id: 'hundred', name: 'Century club', desc: '100 total visits', earned: stats.total >= 100 },
+    { id: 'early', name: 'Early bird', desc: 'Train before 7 AM', earned: early },
+    { id: 'late', name: 'Night owl', desc: 'Train after 8 PM', earned: late },
+    { id: 'unstoppable', name: 'Unstoppable', desc: '30-day streak', earned: stats.best >= 30 }
+  ];
+};
+
+let lastQRSlot = -1;
+const drawPassQR = user => {
+  const canvas = document.getElementById('pass-qr');
+  if (!canvas || !user.memberId) return;
+  const ctx = canvas.getContext('2d');
+  try {
+    const q = QR.encode(qrPayload(user));
+    const cell = Math.floor(canvas.width / (q.size + 8));
+    const off = Math.floor((canvas.width - q.size * cell) / 2);
+    ctx.fillStyle = '#f4f2ec';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#071616';
+    q.modules.forEach((row, r) => row.forEach((v, c) => {
+      if (v) ctx.fillRect(off + c * cell, off + r * cell, cell, cell);
+    }));
+  } catch (err) {
+    ctx.fillStyle = '#0b2422';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#a8b1aa';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('QR unavailable — use', canvas.width / 2, canvas.height / 2 - 8);
+    ctx.fillText('your code below', canvas.width / 2, canvas.height / 2 + 10);
+  }
+};
+
+const tickPassCode = () => {
+  const user = currentUser();
+  const codeEl = document.getElementById('pass-code');
+  if (!user || !user.memberId || !codeEl) return;
+  const section = document.getElementById('profile-attendance');
+  if (!section || section.hidden) return;
+  codeEl.textContent = passCode(user);
+  const secs = 30 - Math.floor(Date.now() / 1000) % 30;
+  document.getElementById('pass-count').textContent = `${secs}s`;
+  document.getElementById('pass-bar').style.width = `${Math.round((secs / 30) * 100)}%`;
+  const slot = slotNow();
+  if (slot !== lastQRSlot) {
+    lastQRSlot = slot;
+    document.getElementById('pass-payload').textContent = qrPayload(user);
+    drawPassQR(user);
+  }
+};
+setInterval(tickPassCode, 1000);
+
+const attStatus = (msg, isErr) => {
+  const el = document.getElementById('att-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('is-err', !!isErr);
+};
+const afterCheckin = (res, method) => {
+  const user = currentUser();
+  if (!res || !user) return;
+  if (res.suspended) { attStatus('Account suspended — please see the front desk.'); return; }
+  if (res.dup) { attStatus(`Already checked in (${METHOD_LABELS[method] || method}). See you on the floor!`); return; }
+  attStatus('');
+  renderAttendance(user);
+  renderToday(user);
+};
+
+const renderAttendance = user => {
+  const section = document.getElementById('profile-attendance');
+  if (!section || !user) return;
+  section.hidden = false;
+  memberPass(user);
+  document.getElementById('pass-name').textContent = user.name;
+  document.getElementById('pass-id').textContent = user.memberId;
+  document.getElementById('pass-code').textContent = passCode(user);
+  document.getElementById('pass-payload').textContent = qrPayload(user);
+  lastQRSlot = slotNow();
+  drawPassQR(user);
+  tickPassCode();
+
+  const stats = attendanceStats(user);
+  document.getElementById('st-pct').textContent = `${stats.pct}%`;
+  document.getElementById('st-pct-sub').textContent = `${stats.distinct} OF ${stats.elapsed} DAYS`;
+  document.getElementById('st-streak').textContent = stats.streak;
+  document.getElementById('st-best').textContent = `BEST ${stats.best}`;
+  document.getElementById('st-total').textContent = stats.total;
+  document.getElementById('st-total-sub').textContent = `ACROSS ${stats.distinct} DAYS`;
+  document.getElementById('st-month').textContent = stats.monthDays;
+  document.getElementById('st-month-sub').textContent = `OF ${stats.daysInMonth} DAYS`;
+
+  const success = document.getElementById('att-success');
+  const visits = user.visits || [];
+  const last = visits[visits.length - 1];
+  if (last && dayKey(new Date(last.at)) === dayKey()) {
+    success.hidden = false;
+    const time = new Date(last.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+    document.getElementById('att-s-sub').textContent =
+      `${time} · ${METHOD_LABELS[last.method] || last.method}${stats.streak > 1 ? ` · 🔥 ${stats.streak}-day streak` : ''}`;
+    document.getElementById('att-s-num').textContent = `SESSION #${visits.length}`;
+  } else success.hidden = true;
+
+  const byDay = {};
+  visits.forEach(v => {
+    const k = dayKey(new Date(v.at));
+    byDay[k] = (byDay[k] || 0) + 1;
+  });
+  const monday = new Date();
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  let cells = '';
+  for (let w = 11; w >= 0; w--) {
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(monday);
+      date.setDate(date.getDate() - w * 7 + d);
+      if (date > new Date()) { cells += '<i class="heat-spacer"></i>'; continue; }
+      const k = dayKey(date);
+      const n = byDay[k] || 0;
+      const level = n === 0 ? 0 : n === 1 ? 1 : n === 2 ? 2 : 3;
+      cells += `<i data-l="${level}" title="${k}: ${n} visit${n === 1 ? '' : 's'}"></i>`;
+    }
+  }
+  document.getElementById('att-heat').innerHTML =
+    '<span class="heat-labels"><span>M</span><span></span><span>W</span><span></span><span>F</span><span></span><span>S</span></span>' + cells;
+
+  const ch = stats.challenge;
+  document.getElementById('ch-text').textContent = ch >= 30 ? '🏆 Challenge complete — 30 / 30!' : `${ch} / 30 days completed`;
+  document.getElementById('ch-bar').style.width = `${Math.round((ch / 30) * 100)}%`;
+  document.getElementById('att-challenge').classList.toggle('is-complete', ch >= 30);
+  document.getElementById('ch-miles').innerHTML = [7, 14, 21, 30].map(m =>
+    `<span class="${ch >= m ? 'is-on' : ''}">${m}</span>`).join('');
+
+  document.getElementById('att-badges').innerHTML = computeBadges(user, stats).map(b =>
+    `<div class="badge${b.earned ? ' is-earned' : ''}"><strong>${b.earned ? '★' : '☆'} ${esc(b.name)}</strong><span>${esc(b.desc)}</span></div>`).join('');
+};
+
+const haversineM = (a, b, c, d) => {
+  const R = 6371000, t = Math.PI / 180;
+  const h = Math.sin((c - a) * t / 2) ** 2 + Math.cos(a * t) * Math.cos(c * t) * Math.sin((d - b) * t / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+const fmtDist = m => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+const geoCheckin = () => {
+  if (!('geolocation' in navigator)) return attStatus('Geolocation is not supported in this browser.', true);
+  attStatus('Locating you…');
+  navigator.geolocation.getCurrentPosition(pos => {
+    const g = ONYX.GYM_LOCATION;
+    const d = haversineM(pos.coords.latitude, pos.coords.longitude, g.lat, g.lng);
+    if (d <= g.radiusM) afterCheckin(doCheckin('geo'), 'geo');
+    else attStatus(`You're ${fmtDist(d)} from ONYX — step within ${g.radiusM} m of the gym to check in.`, true);
+  }, err => attStatus(err && err.code === 1
+    ? 'Location permission denied — allow it once to use GPS check-in.'
+    : 'Could not get your location — try again outside.', true),
+  { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+};
+
+const nfcCheckin = async () => {
+  if (!('NDEFReader' in window)) {
+    attStatus('NFC scanning needs Android Chrome. On iPhone: tap the gym tag to open this page, then use GPS check-in.', true);
+    return;
+  }
+  attStatus('Hold your phone near the ONYX tag… (30s)');
+  try {
+    const reader = new NDEFReader();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    await reader.scan({ signal: ctrl.signal });
+    reader.onreading = event => {
+      clearTimeout(timer);
+      let text = '';
+      try {
+        for (const rec of event.message.records) {
+          if (rec.recordType === 'url' || rec.recordType === 'text') text += new TextDecoder().decode(rec.data);
+        }
+      } catch (err) { /* unreadable record */ }
+      if (/onyx-checkin|onyxathletic/i.test(text)) afterCheckin(doCheckin('nfc'), 'nfc');
+      else attStatus('That is not an ONYX gym tag.', true);
+    };
+    reader.onreadingerror = () => { clearTimeout(timer); attStatus('Could not read the tag — try again.', true); };
+  } catch (err) {
+    attStatus('NFC unavailable or permission denied.', true);
+  }
+};
+
+let recTargetEmail = null;
+const staffUnlocked = () => { try { return sessionStorage.getItem('onyx_staff') === '1'; } catch (err) { return false; } };
+const findMemberById = id => {
+  const norm = String(id || '').trim().toUpperCase();
+  if (!norm) return null;
+  const users = readUsers();
+  return Object.values(users).find(u =>
+    (u.memberId && u.memberId.toUpperCase() === norm) ||
+    (u.memberId && u.memberId.toUpperCase() === `ONYX-${norm}`) ||
+    (u.memberId && u.memberId.toUpperCase().endsWith(norm))) || null;
+};
+const verifyPassCode = (member, code) => {
+  const clean = String(code || '').replace(/\D/g, '');
+  if (clean.length !== 6 || !member.passSecret) return false;
+  const now = slotNow();
+  return [now - 1, now, now + 1].some(s => passCode(member, s) === clean);
+};
+const recStatus = (msg, isErr) => {
+  const el = document.getElementById('rec-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('is-err', !!isErr);
+};
+const refreshRecToday = () => {
+  const el = document.getElementById('rec-today');
+  if (!el) return;
+  const today = dayKey();
+  const users = readUsers();
+  let n = 0;
+  Object.values(users).forEach(u => (u.visits || []).forEach(v => {
+    if (dayKey(new Date(v.at)) === today) n++;
+  }));
+  el.textContent = `${n} CHECK-IN${n === 1 ? '' : 'S'} TODAY · DEMO: THIS BROWSER ONLY`;
+};
+const syncRecViews = () => {
+  const unlocked = staffUnlocked();
+  document.getElementById('rec-pin-view').hidden = unlocked;
+  document.getElementById('rec-main-view').hidden = !unlocked;
+  if (unlocked) refreshRecToday();
+};
+const renderRecMember = member => {
+  const box = document.getElementById('rec-member');
+  if (!box) return;
+  if (!member) { box.hidden = true; box.innerHTML = ''; return; }
+  const visits = (member.visits || []).length;
+  box.hidden = false;
+  box.innerHTML = `<strong>${esc(member.name)}</strong><span>${esc(member.memberId || '')} · ${esc(member.plan || 'NO PLAN')} · ${visits} VISITS</span>`;
+};
+
+/* ---------- attendance events (bound once) ---------- */
+(() => {
+  const manual = document.getElementById('att-manual');
+  if (manual) manual.addEventListener('click', () => afterCheckin(doCheckin('manual'), 'manual'));
+  const geo = document.getElementById('att-geo');
+  if (geo) geo.addEventListener('click', geoCheckin);
+  const nfc = document.getElementById('att-nfc');
+  if (nfc) nfc.addEventListener('click', nfcCheckin);
+  const recBtn = document.getElementById('att-reception');
+  if (recBtn) recBtn.addEventListener('click', () => {
+    recTargetEmail = null;
+    renderRecMember(null);
+    recStatus('');
+    syncRecViews();
+    document.getElementById('reception-dialog').showModal();
+    setTimeout(() => {
+      const f = staffUnlocked() ? document.getElementById('rec-id') : document.getElementById('rec-pin');
+      if (f) f.focus();
+    }, 60);
+  });
+  const dialog = document.getElementById('reception-dialog');
+  if (dialog) dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  const unlock = document.getElementById('rec-unlock');
+  if (unlock) unlock.addEventListener('click', () => {
+    const pin = document.getElementById('rec-pin').value;
+    const err = document.getElementById('rec-pin-error');
+    let lock = {};
+    try { lock = JSON.parse(sessionStorage.getItem('onyx_pin_lock') || '{}'); } catch (e) { lock = {}; }
+    if (lock.until && Date.now() < lock.until) {
+      err.textContent = 'Too many wrong PINs — wait a minute.';
+      err.hidden = false;
+      return;
+    }
+    if (pin === ONYX.RECEPTION_PIN) {
+      try { sessionStorage.setItem('onyx_staff', '1'); sessionStorage.removeItem('onyx_pin_lock'); } catch (e) { /* private mode */ }
+      err.hidden = true;
+      document.getElementById('rec-pin').value = '';
+      syncRecViews();
+    } else {
+      lock.n = (lock.n || 0) + 1;
+      if (lock.n >= 5) { lock.until = Date.now() + 60000; lock.n = 0; }
+      try { sessionStorage.setItem('onyx_pin_lock', JSON.stringify(lock)); } catch (e) { /* private mode */ }
+      err.textContent = lock.until && Date.now() < lock.until ? 'Too many wrong PINs — wait a minute.' : 'Wrong PIN — ask the duty manager.';
+      err.hidden = false;
+    }
+  });
+  const find = document.getElementById('rec-find');
+  if (find) find.addEventListener('click', () => {
+    const member = findMemberById(document.getElementById('rec-id').value);
+    recTargetEmail = member ? member.email : null;
+    renderRecMember(member);
+    recStatus(member ? 'Member found — enter their 6-digit code.' : 'No member with that ID on this device.', !member);
+  });
+  const verify = document.getElementById('rec-verify');
+  if (verify) verify.addEventListener('click', () => {
+    const users = readUsers();
+    const member = recTargetEmail ? users[recTargetEmail] : null;
+    if (!member) return recStatus('Find the member first.', true);
+    const code = document.getElementById('rec-code').value;
+    if (!verifyPassCode(member, code)) return recStatus('Code invalid or expired — ask for the fresh one.', true);
+    const res = doCheckin('reception', member);
+    if (res && res.suspended) return recStatus('Account suspended — see the manager.', true);
+    document.getElementById('rec-code').value = '';
+    renderRecMember(readUsers()[member.email]);
+    refreshRecToday();
+    if (res && !res.dup) {
+      recStatus(`✓ ${member.name.split(' ')[0]} checked in — session #${res.count}.`);
+      const me = currentUser();
+      if (me && me.email === member.email) { renderAttendance(me); renderToday(me); }
+    } else recStatus('Already checked in within the last minute.', true);
+  });
+  const pasteGo = document.getElementById('rec-paste-go');
+  if (pasteGo) pasteGo.addEventListener('click', () => {
+    const raw = document.getElementById('rec-paste').value.trim();
+    const m = raw.match(/^O1\.([A-Z0-9]{6})\.(\d{6})\.(\d+)$/i);
+    if (!m) return recStatus('That does not look like an ONYX QR payload.', true);
+    const member = findMemberById(m[1]);
+    if (!member) return recStatus('Member not found on this device.', true);
+    const slot = parseInt(m[3], 10);
+    if (Math.abs(slotNow() - slot) > 2 || passCode(member, slot) !== m[2])
+      return recStatus('QR expired — ask the member to show the fresh code.', true);
+    const res = doCheckin('qr', member);
+    if (res && res.suspended) return recStatus('Account suspended — see the manager.', true);
+    document.getElementById('rec-paste').value = '';
+    renderRecMember(readUsers()[member.email]);
+    refreshRecToday();
+    if (res && !res.dup) {
+      recStatus(`✓ ${member.name.split(' ')[0]} checked in via QR — session #${res.count}.`);
+      const me = currentUser();
+      if (me && me.email === member.email) { renderAttendance(me); renderToday(me); }
+    } else recStatus('Already checked in within the last minute.', true);
+  });
+  if (document.body.classList.contains('profile-page') && window.location.hash === '#gym-checkin') {
+    const section = document.getElementById('profile-attendance');
+    if (section) {
+      setTimeout(() => {
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        attStatus('ONYX tag detected — tap NFC tap above to finish check-in, or use GPS.');
+      }, 600);
+    }
+  }
+})();
+
+// First paint — runs after every module above is defined.
+/* First paint moved to end of file. */
+
+/* ===========================================================================
+   COACH CORNER (member side) — upcoming sessions + message threads.
+   =========================================================================== */
+const renderCoachSection = user => {
+  const section = document.getElementById('profile-coach');
+  if (!section || !user) return;
+  const threads = user.threads || {};
+  const sessions = (user.sessions || []).filter(s => s.status === 'scheduled' || s.status === 'requested')
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  if (!user.assignedCoach && !Object.keys(threads).length && !sessions.length) { section.hidden = true; return; }
+  section.hidden = false;
+  const users = readUsers();
+  const coachName = email => (users[email] && users[email].name) || email;
+  document.getElementById('pc-coach-line').textContent = user.assignedCoach
+    ? `YOUR COACH: ${coachName(user.assignedCoach).toUpperCase()}`
+    : 'COACH MESSAGES';
+  document.getElementById('pc-sessions').innerHTML = sessions.length
+    ? sessions.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong> — ${esc(s.type || 'Session')}${s.note ? ` · ${esc(s.note)}` : ''}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}</span><button type="button" data-bk-cancel="${s.id}">Cancel</button></li>`).join('')
+    : '<li class="log-empty">No sessions booked yet.</li>';
+  const wrap = document.getElementById('pc-threads');
+  wrap.innerHTML = Object.keys(threads).length ? Object.entries(threads).map(([coach, msgs]) => {
+    const fresh = (msgs || []).filter(m => m.from === 'coach' && m.at > ((user.coachReadAt || {})[coach] || '')).length;
+    return `<div class="pc-thread"><h4>${esc(coachName(coach))}${fresh ? ` <em>${fresh} NEW</em>` : ''}</h4>` +
+      `<div class="pc-msgs">${(msgs || []).map(m => `<p class="${m.from === 'coach' ? 'from-coach' : 'from-me'}"><span>${m.img ? `<img src="${m.img}" alt="Shared photo" loading="lazy" />` : ''}${esc(m.text || '')}</span><small>${esc(fmtDate(m.at))}</small></p>`).join('') || '<p class="log-empty">No messages yet.</p>'}</div>` +
+      `<form class="pc-reply" data-reply="${esc(coach)}"><input maxlength="500" placeholder="Reply to your coach…" /><label class="pc-attach" title="Attach a photo">📎<input type="file" accept="image/*" hidden /></label><button type="submit">Send</button></form></div>`;
+  }).join('') : '<p class="log-empty">No messages yet — your coach will reach out here.</p>';
+  user.coachReadAt = user.coachReadAt || {};
+  Object.keys(threads).forEach(c => { user.coachReadAt[c] = new Date().toISOString(); });
+  saveCurrentUser(user);
+};
+
+(() => {
+  const threads = document.getElementById('pc-threads');
+  if (threads) threads.addEventListener('submit', async event => {
+    const form = event.target.closest('form[data-reply]');
+    if (!form) return;
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const coach = form.dataset.reply;
+    const input = form.querySelector('input:not([type="file"])');
+    const fileEl = form.querySelector('input[type="file"]');
+    const text = input.value.trim().slice(0, 500);
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    if (!text && !file) return;
+    const img = file ? await readImageCapped(file) : null;
+    if (!text && !img) return;
+    user.threads[coach] = user.threads[coach] || [];
+    user.threads[coach].push({ from: 'member', text, img, at: new Date().toISOString() });
+    pruneThreadImages(user);
+    saveCurrentUser(user);
+    renderCoachSection(user);
+  });
+})();
+
+/* ===========================================================================
+   TRAINER DASHBOARD — roster, client files, assign/modify programs, diet,
+   sessions, notes, messages, progress review. Same-browser demo: trainers see
+   accounts on this device; cross-device needs the backend.
+   =========================================================================== */
+let activeClientEmail = null;
+
+const getMember = email => { const users = readUsers(); return users[email] || null; };
+const saveMember = m => { const users = readUsers(); users[m.email] = m; writeUsers(users); };
+const memberStatus = m => {
+  if (!m.plan) return m.pendingPayment ? `PENDING · ${String(m.pendingPayment.plan).toUpperCase()}` : 'NO PLAN';
+  const left = m.expiresAt ? Math.ceil((new Date(m.expiresAt) - Date.now()) / 86400000) : null;
+  return `${String(m.plan).toUpperCase()}${left === null ? '' : left < 0 ? ' · EXPIRED' : ` · ${left}D LEFT`}`;
+};
+const threadUnreadCoach = (coach, m) => {
+  const thread = ((m.threads || {})[coach.email]) || [];
+  const since = (coach.memberReadAt || {})[m.email] || '';
+  return thread.filter(x => x.from === 'member' && x.at > since).length;
+};
+
+const renderCoachGate = user => {
+  const box = document.getElementById('coach-gate-body');
+  if (!box) return;
+  if (!user) {
+    box.innerHTML = '<p class="about-hero-desc">Log in with your coach account to open the trainer dashboard.</p><button type="button" class="program-get-started" id="coach-login"><span>Log in</span></button>';
+    document.getElementById('coach-login').addEventListener('click', () => openAuth('Log in with your coach account.'));
+  } else {
+    box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this account is not on the coach roster yet. Ask an admin to add it to <strong>COACH_EMAILS</strong> in site config, then reload.</p><a class="program-get-started pf-member-link" href="mailto:vx.monit@gmail.com?subject=${encodeURIComponent(`Coach access request — ${user.email}`)}"><span>Request access</span></a>`;
+  }
+};
+
+const clientCard = (coach, m, isMine) => {
+  const visits = m.visits || [];
+  const last = visits.length ? fmtDate(visits[visits.length - 1].at) : 'Never';
+  const unread = isMine ? threadUnreadCoach(coach, m) : 0;
+  return `<article class="client-card"><div><h3>${esc(m.name)}${unread ? ` <em>${unread} NEW</em>` : ''}</h3>` +
+    `<p class="client-sub">${esc(memberStatus(m))}</p>` +
+    `<p class="client-meta">STREAK ${calcStreak(m.checkins)} · ${visits.length} VISITS · LAST ${esc(String(last)).toUpperCase()}</p></div>` +
+    `<div class="client-actions"><button type="button" data-client="${esc(m.email)}" data-act="open">Open</button>` +
+    (isMine ? `<button type="button" data-client="${esc(m.email)}" data-act="release">Release</button>`
+      : `<button type="button" data-client="${esc(m.email)}" data-act="claim">Claim</button>`) + '</div></article>';
+};
+
+const renderCoachDash = coach => {
+  const users = Object.values(readUsers()).filter(u => !isCoach(u));
+  const mine = users.filter(u => u.assignedCoach === coach.email);
+  const pool = users.filter(u => u.assignedCoach !== coach.email);
+  const today = dayKey();
+  const in7 = new Date();
+  in7.setDate(in7.getDate() + 7);
+  const weekKey = dayKey(in7);
+  let checkinsToday = 0, sessions7 = 0, unread = 0;
+  mine.forEach(m => {
+    (m.visits || []).forEach(v => { if (dayKey(new Date(v.at)) === today) checkinsToday++; });
+    (m.sessions || []).forEach(s => { if (s.status === 'scheduled' && s.date <= weekKey) sessions7++; });
+    unread += threadUnreadCoach(coach, m);
+  });
+  document.getElementById('coach-title').innerHTML = `Namaste,<br /><em>${esc(coach.name.split(' ')[0])}.</em>`;
+  document.getElementById('coach-sub').textContent = `${mine.length} CLIENT${mine.length === 1 ? '' : 'S'} · ${coach.email}`;
+  document.getElementById('coach-stats').innerHTML = [
+    [mine.length, 'CLIENTS'], [sessions7, 'SESSIONS / 7 DAYS'], [checkinsToday, 'CHECK-INS TODAY'], [unread, 'UNREAD MSGS']
+  ].map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.getElementById('coach-clients').innerHTML = mine.length ? mine.map(m => clientCard(coach, m, true)).join('')
+    : '<p class="log-empty">No clients yet — claim members from the pool below.</p>';
+  document.getElementById('coach-pool').innerHTML = pool.length ? pool.map(m => clientCard(coach, m, false)).join('')
+    : '<p class="log-empty">No other members on this device yet.</p>';
+  renderAvail(coach);
+};
+
+const clientPhotoURLs = new Set();
+const revokeClientPhotos = () => { clientPhotoURLs.forEach(u => URL.revokeObjectURL(u)); clientPhotoURLs.clear(); };
+
+const renderClientDetail = (coach, m) => {
+  const body = document.getElementById('client-body');
+  if (!body || !m) return;
+  revokeClientPhotos();
+  const stats = attendanceStats(m);
+  const visits = m.visits || [];
+  const goals = m.goals || [];
+  const measures = m.measurements || [];
+  const prs = m.prs || [];
+  const notes = [...(m.coachNotes || [])].reverse();
+  const sessions = [...(m.sessions || [])].sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  const upcoming = sessions.filter(s => s.status === 'scheduled' || s.status === 'requested');
+  const past = sessions.filter(s => s.status !== 'scheduled' && s.status !== 'requested').reverse();
+  const thread = ((m.threads || {})[coach.email]) || [];
+  const ap = m.activeProgram;
+  const diet = m.customDiet;
+  const p = m.profile;
+  const programs = [...ONYX_PROGRAMS.map(x => ({ tag: 'b', ...x })), ...(coach.customPrograms || []).map(x => ({ tag: 'c', ...x }))];
+  const doneDates = Object.keys(m.workoutDone || {}).sort().reverse().slice(0, 12);
+
+  body.innerHTML =
+  `<p class="eyebrow">CLIENT FILE · ${esc(m.memberId || 'NO PASS YET')}</p><h2>${esc(m.name)}</h2>` +
+  `<p class="client-file-sub">${esc(m.email).toUpperCase()} · ${esc(memberStatus(m))} · STREAK ${stats.streak} · ${stats.total} VISITS · LV ${levelOf(pointsOf(m)).n}</p>${m.phone ? `<p><a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${esc(m.phone)}?text=${encodeURIComponent(`Hi ${m.name}! This is your ONYX coach.`)}">💬 WhatsApp ${esc(m.name.split(' ')[0])} · ${esc(m.phone)}</a></p>` : ''}` +
+  `<div class="cgrid">` +
+  `<section class="cblock"><span class="today-tag">ACTIVE PROGRAM</span>` +
+    (ap && ap.week
+      ? `<h3>${esc(ap.name)}</h3><p class="csub">${ap.week.length} DAYS/WK${ap.source === 'coach' ? ` · ASSIGNED BY ${esc(String(ap.coach || '')).toUpperCase()}` : ap.source === 'library' || ap.source === 'custom' ? ' · FROM LIBRARY' : ' · FROM ASSESSMENT'}</p><ul class="clist">` +
+        ap.week.map(d => `<li><span><strong>${esc(d.label)} — ${esc(d.focus)}</strong>${d.items.length} exercises</span></li>`).join('') + `</ul>`
+      : '<p class="log-empty">No active program.</p>') +
+    `<div class="crow"><button type="button" data-act="modify"${ap && ap.week ? '' : ' disabled'}>Modify exercises</button><button type="button" data-act="build">Build new</button></div>` +
+    `<div class="crow"><select id="assign-picker" aria-label="Program to assign">${programs.map(x => `<option value="${x.tag}:${x.id}">${esc(x.name)} · ${x.week.length}d</option>`).join('')}</select><button type="button" data-act="assign">Assign to client</button></div></section>` +
+  `<section class="cblock"><span class="today-tag">SESSIONS</span><ul class="clist">` +
+    (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}${s.status === 'requested' ? ' · REQUESTED' : ''}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns">${s.status === 'requested' ? `<button type="button" data-act="session-confirm" data-id="${s.id}">Confirm</button><button type="button" data-act="session-decline" data-id="${s.id}">Decline</button>` : `<button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button>`}${m.phone ? `<a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${m.phone}?text=${encodeURIComponent(`Hi ${m.name}, confirming your ${s.type || 'session'} on ${s.date} at ${s.time} — ONYX Athletic Club`)}">WA</a>` : ''}</span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
+    `<form data-form="session" class="cform"><input type="date" name="sdate" required /><input type="time" name="stime" required /><input name="stype" maxlength="30" placeholder="Type — PT / Assessment" /><input name="snote" maxlength="80" placeholder="Note (optional)" /><button type="submit">Book session</button></form>` +
+    (past.length ? `<p class="csub">PAST: ${past.slice(0, 5).map(s => `${esc(s.date.slice(5))} ${esc(s.status)}`).join(' · ')}</p>` : '') + `</section>` +
+  `<section class="cblock"><span class="today-tag">GOALS</span>${clientGoalLine(m)}<ul class="clist">` +
+    (goals.length ? goals.map(g => `<li><span><strong>${esc(g.title)}</strong>${esc(String(g.current))} / ${esc(String(g.target))} ${esc(g.unit)}${g.done ? ' · DONE ✓' : ''}</span><span class="cbtns"><button type="button" data-act="goal-del" data-id="${g.id}">×</button></span></li>`).join('') : '<li class="log-empty">No goals set.</li>') + `</ul>` +
+    `<form data-form="goal" class="cform"><input name="title" maxlength="50" placeholder="Goal — e.g. 100 kg squat" required /><input name="target" type="number" step="any" min="1" placeholder="Target" required /><input name="unit" maxlength="10" placeholder="Unit" required /><button type="submit">Add goal</button></form></section>` +
+  `<section class="cblock"><span class="today-tag">MEASUREMENTS</span>` +
+    (measures.length ? `<div class="ctable"><table><tr><th>DATE</th><th>WT</th><th>CHEST</th><th>WAIST</th><th>ARM</th><th>THIGH</th><th></th></tr>` +
+      [...measures].reverse().slice(0, 6).map((x, i) => `<tr><td>${esc(String(x.d || '').slice(5))}</td><td>${esc(String(x.weight || '—'))}</td><td>${esc(String(x.chest || '—'))}</td><td>${esc(String(x.waist || '—'))}</td><td>${esc(String(x.arm || '—'))}</td><td>${esc(String(x.thigh || '—'))}</td><td><button type="button" data-act="measure-del" data-id="${measures.length - 1 - i}">×</button></td></tr>`).join('') + `</table></div>` : '<p class="log-empty">No measurements logged.</p>') +
+    `<form data-form="measure" class="cform cform-measure"><input name="weight" type="number" step="0.1" min="30" max="250" placeholder="kg *" required /><input name="chest" type="number" step="0.5" placeholder="chest" /><input name="waist" type="number" step="0.5" placeholder="waist" /><input name="arm" type="number" step="0.5" placeholder="arm" /><input name="thigh" type="number" step="0.5" placeholder="thigh" /><button type="submit">Log</button></form></section>` +
+  `<section class="cblock"><span class="today-tag">PERSONAL RECORDS</span><ul class="clist">` +
+    (prs.length ? [...prs].reverse().map(r => `<li><span><strong>${esc(r.lift)} — ${esc(String(r.weight))}kg</strong>${esc(fmtDate(r.date))}${r.note ? ` · ${esc(r.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="pr-del" data-id="${r.id}">×</button></span></li>`).join('') : '<li class="log-empty">No PRs logged.</li>') + `</ul>` +
+    `<form data-form="pr" class="cform"><input name="lift" maxlength="40" placeholder="Lift — e.g. Deadlift" required /><input name="weight" type="number" step="0.5" min="1" placeholder="kg" required /><input name="note" maxlength="60" placeholder="Note (optional)" /><button type="submit">Log PR</button></form></section>` +
+  `<section class="cblock"><span class="today-tag">DIET PLAN</span>` +
+    clientDietHTML(m) +
+    `<div class="crow"><button type="button" data-act="diet">Write diet plan</button></div></section>` +
+  `<section class="cblock"><span class="today-tag">COACH NOTES</span><ul class="clist">` +
+    (notes.length ? notes.map(n => `<li><span><strong>${esc(fmtDate(n.at))} · ${n.shared ? 'SHARED' : 'PRIVATE'}</strong>${esc(n.text)}</span><span class="cbtns"><button type="button" data-act="note-share" data-id="${n.id}">${n.shared ? 'Unshare' : 'Share'}</button><button type="button" data-act="note-del" data-id="${n.id}">×</button></span></li>`).join('') : '<li class="log-empty">No notes yet.</li>') + `</ul>` +
+    `<form data-form="note" class="cform"><input name="text" maxlength="280" placeholder="Note about this client…" required /><label class="ccheck"><input type="checkbox" name="shared" /> Share with member</label><button type="submit">Add note</button></form></section>` +
+  `<section class="cblock"><span class="today-tag">MESSAGES</span><div class="pc-msgs cmsgs">` +
+    (thread.length ? thread.map(x => `<p class="${x.from === 'coach' ? 'from-me' : 'from-coach'}"><span>${x.img ? `<img src="${x.img}" alt="Shared photo" loading="lazy" />` : ''}${esc(x.text || '')}</span><small>${esc(fmtDate(x.at))}</small></p>`).join('') : '<p class="log-empty">No messages yet.</p>') + `</div>` +
+    `<form data-form="msg" class="cform"><input name="text" maxlength="500" placeholder="Message this member…" /><label class="pc-attach" title="Attach a photo">📎<input type="file" name="photo" accept="image/*" hidden /></label><button type="submit">Send</button></form></section>` +
+  `<section class="cblock"><span class="today-tag">ATTENDANCE</span><p class="csub">${stats.pct}% · STREAK ${stats.streak} (BEST ${stats.best}) · ${stats.total} VISITS · ${stats.monthDays} THIS MONTH</p><ul class="clist">` +
+    (visits.length ? [...visits].reverse().slice(0, 6).map(v => `<li><span><strong>${esc(fmtDate(v.at))}</strong>${esc((METHOD_LABELS[v.method] || v.method).toUpperCase())}</span></li>`).join('') : '<li class="log-empty">No visits yet.</li>') + `</ul></section>` +
+  `<section class="cblock"><span class="today-tag">WORKOUT HISTORY</span>` +
+    (doneDates.length ? `<div class="chips">${doneDates.map(d => `<span>${esc(d.slice(5))} ✓</span>`).join('')}</div>` : '<p class="log-empty">No completed workouts logged.</p>') +
+    `<p class="csub">MEMBERSHIP: ${esc(memberStatus(m))}${p ? ` · GOAL ${(GOAL_LABELS[p.goal] || '').toUpperCase()} · ${p.weight} → ${p.target} KG` : ''}</p></section>` +
+  `<section class="cblock cwide"><span class="today-tag">PROGRESS PHOTOS</span><div class="cphotos" id="client-photos"><p class="log-empty">Loading vault…</p></div></section>` +
+  `</div>`;
+  loadClientPhotos(m);
+};
+
+const loadClientPhotos = async m => {
+  const box = document.getElementById('client-photos');
+  if (!box) return;
+  let entries = [];
+  try { entries = await ProgressDB.all(m.email); }
+  catch (err) { box.innerHTML = '<p class="log-empty">Vault unavailable.</p>'; return; }
+  entries.sort((a, b) => a.week - b.week);
+  if (!entries.length) { box.innerHTML = '<p class="log-empty">No check-ins yet.</p>'; return; }
+  box.innerHTML = entries.map(e => {
+    const locked = e.privacy === 'private';
+    const blob = !locked && e.photos ? (e.photos.front || e.photos.side || e.photos.back) : null;
+    let url = null;
+    if (blob) { url = URL.createObjectURL(blob); clientPhotoURLs.add(url); }
+    return `<div class="cphoto${locked ? ' is-locked' : ''}">${url ? `<img src="${url}" alt="Week ${e.week}" loading="lazy" />` : `<span>${locked ? '🔒 PRIVATE' : 'NO PHOTO'}</span>`}<strong>W${e.week}</strong><small>${esc(fmtDate(e.dateISO))}${e.weight ? ` · ${e.weight}KG` : ''} · ${(PRIVACY_LABELS[e.privacy] || '')}</small>${locked ? `<button type="button" data-act="reqphoto" data-id="${e.week}">Request access</button>` : ''}</div>`;
+  }).join('');
+};
+
+const refreshClientDetail = () => {
+  const coach = currentUser();
+  const m = activeClientEmail ? getMember(activeClientEmail) : null;
+  if (!coach || !m) return;
+  const y = window.scrollY;
+  renderClientDetail(coach, m);
+  window.scrollTo(0, y);
+};
+
+const renderCoach = () => {
+  if (!document.body.classList.contains('coach-page')) return;
+  const gate = document.getElementById('coach-gate');
+  const dash = document.getElementById('coach-dash');
+  const roster = document.getElementById('coach-roster');
+  const detail = document.getElementById('coach-client');
+  const user = currentUser();
+  if (!user || !isCoach(user)) {
+    gate.hidden = false; dash.hidden = true; roster.hidden = true; detail.hidden = true;
+    renderCoachGate(user);
+    return;
+  }
+  gate.hidden = true;
+  if (activeClientEmail && getMember(activeClientEmail)) {
+    dash.hidden = true; roster.hidden = true; detail.hidden = false;
+    renderClientDetail(user, getMember(activeClientEmail));
+  } else {
+    activeClientEmail = null;
+    dash.hidden = false; roster.hidden = false; detail.hidden = true;
+    renderCoachDash(user);
+  }
+};
+const refreshCoach = () => renderCoach();
+
+const openModify = () => {
+  const m = activeClientEmail ? getMember(activeClientEmail) : null;
+  if (!m || !m.activeProgram || !m.activeProgram.week) return;
+  document.getElementById('mod-sub').textContent = `${m.name.toUpperCase()} · ${m.activeProgram.name.toUpperCase()} — EDITS GO LIVE ON THEIR DASHBOARD INSTANTLY.`;
+  document.getElementById('mod-days').innerHTML = m.activeProgram.week.map((d, i) =>
+    `<div class="builder-day" data-day="${i}"><span class="field-label">DAY ${i + 1} FOCUS</span>` +
+    `<input name="focus-${i}" maxlength="40" value="${esc(d.focus)}" />` +
+    `<div class="ex-list" id="mod-list-${i}">` +
+    d.items.map(item => `<div class="mod-row"><input maxlength="120" value="${esc(item)}" aria-label="Exercise" /><button type="button" data-mod-del aria-label="Remove">×</button></div>`).join('') +
+    `</div><button type="button" class="builder-add" data-mod-add="${i}">+ Add exercise</button></div>`
+  ).join('');
+  document.getElementById('modify-error').hidden = true;
+  document.getElementById('modify-dialog').showModal();
+};
+
+const openDiet = () => {
+  const m = activeClientEmail ? getMember(activeClientEmail) : null;
+  if (!m) return;
+  const cur = m.customDiet;
+  const p = m.profile;
+  document.getElementById('diet-sub').textContent = `${m.name.toUpperCase()} — PUBLISHING REPLACES THEIR CURRENT DIET PLAN.`;
+  document.getElementById('diet-cal').value = (cur && cur.calories) || (p && p.calories) || '';
+  document.getElementById('diet-pro').value = (cur && cur.protein) || (p && p.protein) || '';
+  document.getElementById('diet-carb').value = (cur && cur.carbs) || '';
+  document.getElementById('diet-fat').value = (cur && cur.fat) || '';
+  const meals = (cur && cur.meals) || (p && p.meals) || [];
+  document.querySelectorAll('#diet-dialog .diet-meal').forEach((block, i) => {
+    const meal = normMeal(meals[i] || [MEAL_SLOTS[i] || `Meal ${i + 1}`, ''], i);
+    const box = block.querySelector('textarea');
+    const time = block.querySelector('.diet-time');
+    if (box) box.value = meal.x || '';
+    if (time) time.value = meal.time || defaultMealTime(i);
+    ['kcal', 'p', 'c', 'f'].forEach(k => {
+      const inp = block.querySelector(`[data-mk="${k}"]`);
+      if (inp) inp.value = meal[k] > 0 ? meal[k] : '';
+    });
+  });
+  document.getElementById('diet-find').value = '';
+  document.getElementById('diet-find-results').innerHTML = '';
+  document.getElementById('diet-error').hidden = true;
+  document.getElementById('diet-dialog').showModal();
+};
+
+/* ---------- trainer events (bound once) ---------- */
+(() => {
+  const logout = document.getElementById('coach-logout');
+  if (logout) logout.addEventListener('click', () => {
+    localStorage.removeItem(SESSION_KEY);
+    activeClientEmail = null;
+    updateAuthLinks();
+    renderCoach();
+  });
+
+  const roster = document.getElementById('coach-roster');
+  if (roster) roster.addEventListener('click', event => {
+    const btn = event.target.closest('[data-client]');
+    if (!btn) return;
+    const coach = currentUser();
+    const m = getMember(btn.dataset.client);
+    if (!coach || !m) return;
+    if (btn.dataset.act === 'claim') {
+      m.assignedCoach = coach.email;
+      m.assignedAt = new Date().toISOString();
+      saveMember(m);
+      renderCoach();
+    }
+    if (btn.dataset.act === 'release') {
+      m.assignedCoach = null;
+      saveMember(m);
+      renderCoach();
+    }
+    if (btn.dataset.act === 'open') {
+      activeClientEmail = m.email;
+      coach.memberReadAt = coach.memberReadAt || {};
+      coach.memberReadAt[m.email] = new Date().toISOString();
+      saveCurrentUser(coach);
+      renderCoach();
+      window.scrollTo(0, 0);
+    }
+  });
+
+  const detail = document.getElementById('coach-client');
+  if (detail) {
+    detail.addEventListener('click', event => {
+      const btn = event.target.closest('[data-act]');
+      if (!btn || btn.disabled) return;
+      const coach = currentUser();
+      const m = activeClientEmail ? getMember(activeClientEmail) : null;
+      const act = btn.dataset.act;
+      if (act === 'back') { activeClientEmail = null; renderCoach(); window.scrollTo(0, 0); return; }
+      if (!coach || !m) return;
+      if (act === 'build') {
+        builderGoal = '';
+        document.querySelectorAll('#builder-chips button').forEach(b => b.classList.remove('is-on'));
+        document.getElementById('builder-error').hidden = true;
+        document.getElementById('builder-form').reset();
+        renderBuilderDays(4);
+        document.getElementById('builder-dialog').showModal();
+      }
+      if (act === 'assign') {
+        const picker = document.getElementById('assign-picker');
+        const [tag, id] = (picker.value || '').split(':');
+        const src = tag === 'b'
+          ? ONYX_PROGRAMS.find(x => x.id === id)
+          : (coach.customPrograms || []).find(x => x.id === id);
+        if (!src) return;
+        const assigned = { id: `a${Date.now().toString(36)}`, name: src.name, source: 'coach', coach: coach.name, assignedAt: new Date().toISOString(), week: JSON.parse(JSON.stringify(src.week)) };
+        m.activeProgram = assigned;
+        m.coachPrograms = m.coachPrograms || [];
+        m.coachPrograms.push(assigned);
+        (m.threads = m.threads || {})[coach.email] = m.threads[coach.email] || [];
+        m.threads[coach.email].push({ from: 'coach', text: `New program assigned: ${src.name} (${src.week.length} days/week). It is live on your dashboard now.`, at: new Date().toISOString() });
+        pushNotif(m, '📋', `New program: ${src.name} assigned by ${coach.name}.`);
+        saveMember(m);
+        refreshClientDetail();
+      }
+      if (act === 'modify') openModify();
+      if (act === 'diet') openDiet();
+      if (act === 'session-done' || act === 'session-cancel' || act === 'session-confirm' || act === 'session-decline') {
+        const s = (m.sessions || []).find(x => x.id === btn.dataset.id);
+        if (!s) return;
+        s.status = act === 'session-done' ? 'done' : act === 'session-confirm' ? 'scheduled' : 'cancelled';
+        pushNotif(m, s.status === 'done' ? '✅' : s.status === 'scheduled' ? '📅' : '❌', `Session on ${s.date} ${s.status === 'scheduled' ? 'confirmed by your coach' : 'marked ' + s.status}.`);
+        if (act === 'session-done' && s.date === dayKey()) doCheckin('pt', m);
+        saveMember(m);
+        refreshClientDetail();
+      }
+      if (act === 'note-del') { m.coachNotes = (m.coachNotes || []).filter(n => n.id !== btn.dataset.id); saveMember(m); refreshClientDetail(); }
+      if (act === 'note-share') {
+        const n = (m.coachNotes || []).find(x => x.id === btn.dataset.id);
+        if (n) { n.shared = !n.shared; saveMember(m); refreshClientDetail(); }
+      }
+      if (act === 'goal-del') { m.goals = (m.goals || []).filter(g => g.id !== btn.dataset.id); saveMember(m); refreshClientDetail(); }
+      if (act === 'measure-del') {
+        const idx = parseInt(btn.dataset.id, 10);
+        m.measurements = m.measurements || [];
+        if (!Number.isNaN(idx) && m.measurements[idx]) m.measurements.splice(idx, 1);
+        saveMember(m);
+        refreshClientDetail();
+      }
+      if (act === 'pr-del') { m.prs = (m.prs || []).filter(r => r.id !== btn.dataset.id); saveMember(m); refreshClientDetail(); }
+      if (act === 'reqphoto') {
+        (m.threads = m.threads || {})[coach.email] = m.threads[coach.email] || [];
+        m.threads[coach.email].push({ from: 'coach', text: `Could you share your Week ${btn.dataset.id} photos with coaches? Open the check-in and change visibility from Private to Coaches.`, at: new Date().toISOString() });
+        saveMember(m);
+        refreshClientDetail();
+      }
+    });
+
+    detail.addEventListener('submit', async event => {
+      const form = event.target.closest('form[data-form]');
+      if (!form) return;
+      event.preventDefault();
+      const coach = currentUser();
+      const m = activeClientEmail ? getMember(activeClientEmail) : null;
+      if (!coach || !m) return;
+      const kind = form.dataset.form;
+      const val = name => (form.elements[name] ? form.elements[name].value.trim() : '');
+      if (kind === 'goal') {
+        const target = parseFloat(val('target'));
+        if (!val('title') || !(target > 0)) return;
+        m.goals = m.goals || [];
+        m.goals.push({ id: `g${Date.now().toString(36)}`, title: val('title').slice(0, 50), target, unit: val('unit').slice(0, 10) || 'units', current: 0, done: false });
+      }
+      if (kind === 'measure') {
+        const weight = parseFloat(val('weight'));
+        if (!(weight > 0)) return;
+        const num = name => { const v = parseFloat(val(name)); return v > 0 ? v : null; };
+        m.measurements = m.measurements || [];
+        m.measurements.push({ d: dayKey(), weight, chest: num('chest'), waist: num('waist'), arm: num('arm'), thigh: num('thigh') });
+      }
+      if (kind === 'pr') {
+        const weight = parseFloat(val('weight'));
+        if (!val('lift') || !(weight > 0)) return;
+        m.prs = m.prs || [];
+        m.prs.push({ id: `r${Date.now().toString(36)}`, lift: val('lift').slice(0, 40), weight, note: val('note').slice(0, 60), date: new Date().toISOString() });
+      }
+      if (kind === 'note') {
+        if (!val('text')) return;
+        m.coachNotes = m.coachNotes || [];
+        m.coachNotes.push({ id: `n${Date.now().toString(36)}`, text: val('text').slice(0, 280), shared: !!(form.elements.shared && form.elements.shared.checked), by: coach.name, at: new Date().toISOString() });
+      }
+      if (kind === 'session') {
+        if (!val('sdate') || !val('stime')) return;
+        m.sessions = m.sessions || [];
+        m.sessions.push({ id: `s${Date.now().toString(36)}`, date: val('sdate'), time: val('stime'), type: val('stype').slice(0, 30) || 'Session', note: val('snote').slice(0, 80), status: 'scheduled', coach: coach.email, by: 'coach' });
+        pushNotif(m, '📅', `Session booked: ${val('sdate')} ${val('stime')} (${val('stype').slice(0, 30) || 'Session'}).`);
+      }
+      if (kind === 'msg') {
+        const f = form.elements.photo && form.elements.photo.files && form.elements.photo.files[0];
+        const img = f ? await readImageCapped(f) : null;
+        const text = val('text').slice(0, 500);
+        if (!text && !img) return;
+        (m.threads = m.threads || {})[coach.email] = m.threads[coach.email] || [];
+        m.threads[coach.email].push({ from: 'coach', text, img, at: new Date().toISOString() });
+        pruneThreadImages(m);
+        pushNotif(m, '💬', `New message from ${coach.name}.`);
+      }
+      saveMember(m);
+      refreshClientDetail();
+    });
+  }
+
+  const modDialog = document.getElementById('modify-dialog');
+  if (modDialog) {
+    modDialog.addEventListener('click', event => {
+      if (event.target === modDialog) { modDialog.close(); return; }
+      const add = event.target.closest('[data-mod-add]');
+      if (add) {
+        const list = document.getElementById(`mod-list-${add.dataset.modAdd}`);
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'mod-row';
+        row.innerHTML = '<input maxlength="120" placeholder="Exercise — sets × reps" aria-label="Exercise" /><button type="button" data-mod-del aria-label="Remove">×</button>';
+        list.appendChild(row);
+        row.querySelector('input').focus();
+        return;
+      }
+      const del = event.target.closest('[data-mod-del]');
+      if (del) { const row = del.closest('.mod-row'); if (row) row.remove(); }
+    });
+    document.getElementById('modify-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const m = activeClientEmail ? getMember(activeClientEmail) : null;
+      if (!m || !m.activeProgram) return;
+      const errorEl = document.getElementById('modify-error');
+      const fail = message => { errorEl.textContent = message; errorEl.hidden = !message; };
+      const week = m.activeProgram.week.map((d, i) => {
+        const focusInput = modDialog.querySelector(`input[name="focus-${i}"]`);
+        const focus = focusInput ? focusInput.value.trim().slice(0, 40) : d.focus;
+        const items = [...modDialog.querySelectorAll(`#mod-list-${i} .mod-row input`)].map(x => x.value.trim()).filter(Boolean);
+        return { label: d.label, focus: focus || d.focus, items };
+      });
+      if (week.some(d => !d.items.length)) return fail('Every day needs at least one exercise.');
+      fail('');
+      m.activeProgram.week = week;
+      m.activeProgram.modifiedAt = new Date().toISOString();
+      saveMember(m);
+      modDialog.close();
+      refreshClientDetail();
+    });
+  }
+
+  const dietDialog = document.getElementById('diet-dialog');
+  if (dietDialog) {
+    dietDialog.addEventListener('click', event => { if (event.target === dietDialog) dietDialog.close(); });
+    document.getElementById('diet-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const coach = currentUser();
+      const m = activeClientEmail ? getMember(activeClientEmail) : null;
+      if (!coach || !m) return;
+      const errorEl = document.getElementById('diet-error');
+      const fail = message => { errorEl.textContent = message; errorEl.hidden = !message; };
+      const meals = [...document.querySelectorAll('#diet-dialog .diet-meal')].map((block, i) => {
+        const box = block.querySelector('textarea');
+        const time = block.querySelector('.diet-time');
+        const num = k => { const inp = block.querySelector(`[data-mk="${k}"]`); const v = inp ? parseFloat(inp.value) : 0; return v > 0 ? +v.toFixed(1) : 0; };
+        return { t: MEAL_SLOTS[i] || `Meal ${i + 1}`, time: time ? time.value : '', x: box ? box.value.trim().slice(0, 300) : '', kcal: Math.round(num('kcal')), p: num('p'), c: num('c'), f: num('f') };
+      });
+      if (meals.some(m => !m.x)) return fail('Fill all four meals \u2014 even a short line each.');
+      const calories = parseInt(document.getElementById('diet-cal').value, 10);
+      const protein = parseInt(document.getElementById('diet-pro').value, 10);
+      const carbs = parseInt(document.getElementById('diet-carb').value, 10);
+      const fat = parseInt(document.getElementById('diet-fat').value, 10);
+      if (!(calories >= 1200 && calories <= 5000)) return fail('Calories must be between 1200 and 5000.');
+      if (!(protein >= 20 && protein <= 400)) return fail('Protein must be between 20 and 400 g.');
+      if (!(carbs >= 50 && carbs <= 700)) return fail('Carbs must be between 50 and 700 g.');
+      if (!(fat >= 20 && fat <= 250)) return fail('Fat must be between 20 and 250 g.');
+      fail('');
+      m.customDiet = { meals, calories, protein, carbs, fat, by: coach.name, at: new Date().toISOString() };
+      pushNotif(m, '🥗', `New diet plan published by ${coach.name}.`);
+      saveMember(m);
+      dietDialog.close();
+      refreshClientDetail();
+    });
+  }
+})();
+
+/* ===========================================================================
+   NUTRITION SYSTEM — embedded food database, daily tracker, trainer diet plans.
+   FOOD_DB rows: [name, kcal, protein, carbs, fat per 100g, serving label, serving g]
+   Values are standard per-100g reference values (cooked weights where noted).
+   =========================================================================== */
+const FOOD_DB = [
+// Staples & grains
+["Roti / Chapati (whole wheat)",265,9,49,3.7,"1 roti",40],["Cooked white rice",130,2.7,28,0.3,"1 katori",150],
+["Cooked brown rice",123,2.7,25.6,1,"1 katori",150],["Whole wheat bread",247,13,41,3.4,"2 slices",60],
+["White bread",265,9,49,3.2,"2 slices",60],["Oats (dry)",389,16.9,66,6.9,"1 bowl",40],
+["Poha (cooked)",130,2.5,27,0.8,"1 plate",180],["Upma (cooked)",132,3.5,24,2.2,"1 plate",180],
+["Idli",145,4,30,0.5,"2 pc",80],["Plain dosa",170,4.5,32,3,"1 pc",80],
+["Masala dosa",165,4.5,28,4,"1 pc",150],["Paratha (with ghee)",290,7,42,10,"1 pc",60],
+["Naan",310,9,56,5,"1 pc",90],["Quinoa (cooked)",120,4.4,21,1.9,"1 katori",150],
+["Dalia (cooked)",120,4,25,0.6,"1 bowl",180],["Cornflakes",357,7.5,84,0.4,"1 bowl",30],
+["Muesli",380,10,65,12,"1 bowl",40],["Pasta (cooked)",131,5,25,1.1,"1 plate",200],
+["Noodles (cooked)",138,4.5,25,2.1,"1 plate",200],["Besan / Gram flour",387,22,58,6.7,"4 tbsp",30],
+["Suji / Rava",360,10,73,1,"4 tbsp",30],["Bajra flour",361,11.6,67.5,5,"4 tbsp",30],
+["Jowar flour",349,10.4,72.6,1.9,"4 tbsp",30],
+// Protein
+["Chicken breast (cooked)",165,31,0,3.6,"1 palm",150],["Chicken thigh (cooked)",209,26,0,11,"2 pc",120],
+["Chicken curry (homemade)",145,15,4,7,"1 katori",150],["Egg (boiled)",155,13,1.1,11,"1 egg",50],
+["Egg white",52,11,0.7,0.2,"1 white",33],["Paneer",265,18,6,20,"4 cubes",60],
+["Tofu",76,8,1.9,4.8,"1 slab",100],["Rohu fish (cooked)",135,20,0,5,"2 pc",120],
+["Salmon (cooked)",206,22,0,12,"1 fillet",120],["Tuna (canned, in water)",108,25,0,1,"1 can",100],
+["Prawns (cooked)",99,24,0.2,0.3,"1 katori",100],["Mutton (cooked, lean)",250,26,0,16,"4 pc",100],
+["Whey protein",400,80,8,6,"1 scoop",30],["Soya chunks (dry)",345,52,33,0.5,"1 handful",40],
+["Soya milk",54,3.3,6,1.6,"1 glass",200],["Toor dal (cooked)",116,7,19,0.6,"1 katori",150],
+["Moong dal (cooked)",105,7,18,0.4,"1 katori",150],["Masoor dal (cooked)",116,9,20,0.4,"1 katori",150],
+["Chana / Chickpeas (cooked)",164,9,27.4,2.6,"1 katori",150],["Rajma (cooked)",132,8.9,23.7,0.5,"1 katori",150],
+["Chole (curry)",150,8,20,4,"1 katori",150],["Kala chana (cooked)",150,9,25,2,"1 katori",120],
+["Sprouts (moong)",30,3,5.7,0.2,"1 bowl",100],["Peanuts",567,26,16,49,"1 handful",30],
+["Almonds",579,21,22,50,"8-10 pc",15],["Cashews",553,18,30,44,"8 pc",15],
+["Walnuts",654,15,14,65,"4 halves",15],["Peanut butter",588,25,20,50,"1 tbsp",16],
+["Makhana (roasted)",347,9.7,77,0.1,"1 bowl",20],
+// Dairy & fats
+["Toned milk",55,3.2,4.8,3,"1 glass",200],["Full-cream milk",67,3.2,4.8,4,"1 glass",200],
+["Curd (plain)",63,3.5,4.7,3.3,"1 katori",150],["Greek yogurt",97,9,3.6,5,"1 katori",150],
+["Chaas / Buttermilk",30,1.5,3,1,"1 glass",200],["Cheese slice",402,23,1.3,33,"1 slice",20],
+["Ghee",876,0.3,0,99.5,"1 tsp",5],["Butter",717,0.9,0.1,81,"1 tsp",5],
+["Mustard oil",884,0,0,100,"1 tsp",5],
+// Vegetables
+["Potato (boiled)",87,1.9,20,0.1,"1 med",150],["Sweet potato (boiled)",86,1.6,20,0.1,"1 med",150],
+["Onion",40,1.1,9.3,0.1,"1 med",100],["Tomato",18,0.9,3.9,0.2,"1 med",100],
+["Palak / Spinach",23,2.9,3.6,0.4,"1 bunch",100],["Cauliflower",25,1.9,5,0.3,"1 katori",100],
+["Cabbage",25,1.3,5.8,0.1,"1 katori",100],["Broccoli",34,2.8,6.6,0.4,"1 katori",100],
+["Carrot",41,0.9,9.6,0.2,"1 med",60],["Green beans",31,1.8,7,0.2,"1 katori",100],
+["Green peas",81,5.4,14.5,0.4,"1 katori",100],["Bhindi / Okra",33,1.9,7.5,0.2,"1 katori",100],
+["Lauki / Bottle gourd",14,0.6,3.4,0,"1 katori",150],["Baingan",25,1,5.9,0.2,"1 katori",150],
+["Shimla mirch",31,1,6,0.3,"1 med",100],["Mix veg sabzi",70,2.5,9,3,"1 katori",150],
+["Dal tadka",120,7,15,4,"1 katori",150],["Sambar",60,3,9,1.5,"1 katori",150],
+// Fruits
+["Banana",89,1.1,22.8,0.3,"1 med",120],["Apple",52,0.3,13.8,0.2,"1 med",180],
+["Orange",47,0.9,11.8,0.1,"1 med",130],["Mango",60,0.8,15,0.4,"1 cup",150],
+["Papaya",43,0.5,11,0.3,"1 cup",150],["Watermelon",30,0.6,7.6,0.2,"1 wedge",200],
+["Grapes",69,0.7,18,0.2,"15 pc",100],["Pomegranate",83,1.7,18.7,1.2,"1 katori",100],
+["Pineapple",50,0.5,13,0.1,"1 cup",150],["Guava",68,2.6,14,1,"1 med",100],
+["Dates",282,2.5,75,0.4,"2 pc",16],["Raisins",299,3.1,79,0.5,"1 tbsp",20],
+["Coconut water",19,0.7,3.7,0.2,"1 glass",200],
+// Snacks & eating out
+["Samosa",262,6,32,13,"1 pc",100],["Veg pakora",290,7,28,17,"5 pc",100],
+["Dhokla",160,6,28,3,"2 pc",100],["Vada pav",220,5.5,30,9,"1 pc",140],
+["Pav bhaji (with 2 pav)",150,4,20,6,"1 plate",300],["Chole bhature",190,6,28,6,"1 plate",350],
+["Veg biryani",150,4,28,3,"1 plate",250],["Chicken biryani",165,9,22,5,"1 plate",250],
+["Veg fried rice",150,4,27,3,"1 plate",200],["Hakka noodles",140,4,25,3,"1 plate",200],
+["Veg momos (steamed)",150,5,28,2,"5 pc",120],["Spring rolls",200,5,24,10,"2 pc",100],
+["Pizza slice (veg)",240,10,30,9,"1 slice",100],["Veg burger",230,7,30,9,"1 pc",150],
+["French fries",319,3.4,37,17,"1 med",100],["Mixture namkeen",500,12,45,30,"1 handful",30],
+["Popcorn (air-popped)",387,13,78,4.5,"1 bowl",20],["Dark chocolate",598,7.8,46,43,"2 squares",20],
+["Milk chocolate",535,8,59,30,"2 squares",20],["Vanilla ice cream",207,3.5,23.6,11,"1 scoop",60],
+["Gulab jamun",300,5,45,12,"2 pc",60],["Jalebi",380,3,75,8,"2 pc",40],
+["Rasgulla",140,6,25,2,"2 pc",80],["Motichoor ladoo",450,6,60,20,"1 pc",30],
+// Beverages
+["Chai (milk + sugar)",40,1.5,6,1,"1 cup",150],["Filter coffee (milk + sugar)",45,1.8,6.5,1.2,"1 cup",150],
+["Black coffee",2,0.3,0,0,"1 cup",150],["Green tea",1,0,0,0,"1 cup",150],
+["Sweet lassi",110,3.5,16,4,"1 glass",200],["Fresh lime soda (sweet)",45,0,11,0,"1 glass",250],
+["Orange juice",45,0.7,10.4,0.2,"1 glass",200],["Cola",42,0,10.6,0,"1 glass",250],
+["Badam milk",90,3,12,3.5,"1 glass",200],["Cold coffee",80,2.5,13,2,"1 glass",250]
+];
+const MEAL_SLOTS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'];
+const foodByName = name => FOOD_DB.find(f => f[0] === name);
+const searchFoods = q => {
+  const needle = String(q || '').trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const starts = [], hits = [];
+  FOOD_DB.forEach(f => {
+    const name = f[0].toLowerCase();
+    if (name.startsWith(needle)) starts.push(f);
+    else if (name.includes(needle)) hits.push(f);
+  });
+  return [...starts, ...hits].slice(0, 8);
+};
+const scaleFood = (food, grams) => {
+  const k = Math.max(0, grams) / 100;
+  return { kcal: Math.round(food[1] * k), p: +(food[2] * k).toFixed(1), c: +(food[3] * k).toFixed(1), f: +(food[4] * k).toFixed(1) };
+};
+const fmtNum = n => Number(n || 0).toLocaleString('en-US');
+const fmtClock = hhmm => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || '');
+  if (!m) return '';
+  let h = parseInt(m[1], 10);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
+};
+const defaultMealTime = i => ['08:00', '13:00', '17:00', '20:00'][i] || '';
+const mealForHour = (h = new Date().getHours()) => h < 11 ? 'Breakfast' : h < 16 ? 'Lunch' : h < 19 ? 'Snack' : 'Dinner';
+
+/* Diet targets: trainer plan wins, else assessment template, else sensible default. */
+const getDietTargets = user => {
+  const d = user.customDiet;
+  if (d && d.calories) return { kcal: d.calories, p: d.protein || 0, c: d.carbs || 0, f: d.fat || 0 };
+  const p = user.profile;
+  if (p && p.calories) return { kcal: p.calories, p: p.protein || 0, c: Math.round(p.calories * 0.45 / 4), f: Math.round(p.calories * 0.25 / 9) };
+  return { kcal: 2400, p: 150, c: 270, f: 65 };
+};
+/* Normalize legacy [title, text] pairs and new meal objects into one shape. */
+const normMeal = (m, i) => Array.isArray(m)
+  ? { t: m[0] || MEAL_SLOTS[i] || `Meal ${i + 1}`, time: '', x: m[1] || '', kcal: 0, p: 0, c: 0, f: 0 }
+  : { t: (m && m.t) || MEAL_SLOTS[i] || `Meal ${i + 1}`, time: (m && m.time) || '', x: (m && m.x) || '', kcal: +(m && m.kcal) || 0, p: +(m && m.p) || 0, c: +(m && m.c) || 0, f: +(m && m.f) || 0 };
+const dayIntake = user => {
+  const log = ((user.foodLog || {})[dayKey()] || []);
+  return log.reduce((a, e) => ({ kcal: a.kcal + (+e.kcal || 0), p: a.p + (+e.p || 0), c: a.c + (+e.c || 0), f: a.f + (+e.f || 0), count: a.count + 1 }),
+    { kcal: 0, p: 0, c: 0, f: 0, count: 0 });
+};
+
+/* ---------- member diet section: plan + tracker + log ---------- */
+const renderDietSection = user => {
+  const tg = getDietTargets(user);
+  document.getElementById('pf-calories').textContent = fmtNum(tg.kcal);
+  document.getElementById('pf-protein').textContent = `${fmtNum(tg.p)}g`;
+  document.getElementById('pf-carbs').textContent = `${fmtNum(tg.c)}g`;
+  document.getElementById('pf-fat').textContent = `${fmtNum(tg.f)}g`;
+  const raw = (user.customDiet && user.customDiet.meals) || (user.profile && user.profile.meals) || [];
+  document.getElementById('pf-meals').innerHTML = raw.map((m, i) => {
+    const meal = normMeal(m, i);
+    const clock = meal.time ? `<time>${esc(fmtClock(meal.time))}</time>` : '';
+    const macros = meal.kcal > 0 ? `<small>${fmtNum(meal.kcal)} KCAL · P${fmtNum(meal.p)} C${fmtNum(meal.c)} F${fmtNum(meal.f)}</small>` : '';
+    return `<div class="pf-meal"><h4>${esc(meal.t)}${clock}</h4><p>${esc(meal.x).replace(/\n/g, '<br />')}</p>${macros}</div>`;
+  }).join('');
+  const dietNote = document.getElementById('pf-diet-note');
+  if (dietNote) dietNote.textContent = user.customDiet
+    ? `CUSTOMIZED BY ${String(user.customDiet.by).toUpperCase()} · ${fmtDate(user.customDiet.at).toUpperCase()} — YOUR COACH FINE-TUNED THIS PLAN FOR YOU.`
+    : 'Generic template from your assessment — your coach and a nutritionist fine-tune it to you. Not medical advice.';
+  const counter = document.getElementById('food-count');
+  if (counter) counter.textContent = FOOD_DB.length;
+  renderTracker(user);
+};
+
+const renderTracker = user => {
+  const card = document.getElementById('diet-track');
+  const logBox = document.getElementById('food-log');
+  if (!card || !logBox) return;
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const left = tg.kcal - ate.kcal;
+  const bar = (val, goal) => {
+    const pc = goal > 0 ? Math.min(100, Math.round((val / goal) * 100)) : 0;
+    return `<span class="track-bar"><i style="width:${pc}%"></i></span>`;
+  };
+  card.hidden = false;
+  card.innerHTML = `<span class="today-tag">TODAY'S INTAKE</span>` +
+    `<p class="track-big"><strong>${fmtNum(ate.kcal)}</strong> / ${fmtNum(tg.kcal)} kcal</p>${bar(ate.kcal, tg.kcal)}` +
+    `<p class="track-left">${left >= 0 ? `${fmtNum(left)} kcal left today` : `${fmtNum(-left)} kcal over target`}</p>` +
+    `<div class="track-macros">` +
+    [['PROTEIN', ate.p, tg.p], ['CARBS', ate.c, tg.c], ['FAT', ate.f, tg.f]].map(([l, v, g]) =>
+      `<div><span>${l}</span><strong>${fmtNum(Math.round(v))} / ${fmtNum(g)}g</strong>${bar(v, g)}</div>`).join('') + `</div>`;
+  const entries = ((user.foodLog || {})[dayKey()] || []);
+  logBox.innerHTML = entries.length
+    ? MEAL_SLOTS.map(slot => {
+        const items = entries.map((e, i) => ({ ...e, i })).filter(e => e.meal === slot);
+        if (!items.length) return '';
+        const sub = items.reduce((a, e) => a + (+e.kcal || 0), 0);
+        return `<div class="food-slot"><h4>${slot}<em>${fmtNum(sub)} kcal</em></h4><ul>` +
+          items.map(e => `<li><span><strong>${esc(e.name)}</strong>${esc(String(e.grams))}g · ${fmtNum(e.kcal)} kcal · P${e.p} C${e.c} F${e.f}</span><button type="button" data-food-del="${e.i}" aria-label="Remove">×</button></li>`).join('') + `</ul></div>`;
+      }).join('')
+    : '<p class="log-empty">Nothing logged yet — search the food database below and tap a result to add it.</p>';
+};
+
+/* ---------- member food search + log events (bound once) ---------- */
+(() => {
+  const input = document.getElementById('food-search');
+  if (!input) return;
+  const results = document.getElementById('food-results');
+  const pick = document.getElementById('food-pick');
+  const pickName = document.getElementById('food-pick-name');
+  const pickGrams = document.getElementById('food-pick-grams');
+  const pickMeal = document.getElementById('food-pick-meal');
+  const pickMacros = document.getElementById('food-pick-macros');
+  let selected = null;
+  const paintPick = () => {
+    if (!selected) { pick.hidden = true; return; }
+    pick.hidden = false;
+    pickName.textContent = selected[0];
+    const g = Math.max(1, parseInt(pickGrams.value, 10) || selected[6] || 100);
+    const s = scaleFood(selected, g);
+    pickMacros.textContent = `${fmtNum(g)}g = ${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f} (per 100g: ${selected[1]} kcal · P${selected[2]} C${selected[3]} F${selected[4]})`;
+  };
+  input.addEventListener('input', () => {
+    const hits = searchFoods(input.value);
+    results.innerHTML = hits.map(f =>
+      `<button type="button" data-food="${esc(f[0])}"><strong>${esc(f[0])}</strong><span>100g: ${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</span><em>${esc(f[5])} · ${f[6]}g</em></button>`
+    ).join('');
+  });
+  results.addEventListener('click', event => {
+    const btn = event.target.closest('[data-food]');
+    if (!btn) return;
+    selected = foodByName(btn.dataset.food);
+    if (!selected) return;
+    pickGrams.value = selected[6] || 100;
+    pickMeal.value = mealForHour();
+    paintPick();
+    pickGrams.focus();
+    pickGrams.select();
+  });
+  pickGrams.addEventListener('input', paintPick);
+  pick.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!selected) return;
+    const user = currentUser();
+    if (!user) return;
+    const grams = Math.min(2000, Math.max(1, parseInt(pickGrams.value, 10) || selected[6] || 100));
+    const s = scaleFood(selected, grams);
+    user.foodLog = user.foodLog || {};
+    const key = dayKey();
+    user.foodLog[key] = user.foodLog[key] || [];
+    user.foodLog[key].push({ name: selected[0], grams, meal: pickMeal.value, ...s, at: new Date().toISOString() });
+    saveCurrentUser(user);
+    selected = null;
+    pick.hidden = true;
+    input.value = '';
+    results.innerHTML = '';
+    renderTracker(user);
+  });
+  const logBox = document.getElementById('food-log');
+  if (logBox) logBox.addEventListener('click', event => {
+    const btn = event.target.closest('[data-food-del]');
+    if (!btn) return;
+    const user = currentUser();
+    if (!user) return;
+    const key = dayKey();
+    const list = (user.foodLog || {})[key] || [];
+    const idx = parseInt(btn.dataset.foodDel, 10);
+    if (!Number.isNaN(idx) && list[idx]) list.splice(idx, 1);
+    saveCurrentUser(user);
+    renderTracker(user);
+  });
+})();
+
+/* ---------- trainer: client diet block + intake ---------- */
+const clientDietHTML = m => {
+  const diet = m.customDiet;
+  const p = m.profile;
+  let html = '';
+  if (diet && diet.meals) {
+    const tg = getDietTargets(m);
+    html += `<p class="csub">CUSTOM · ${fmtNum(tg.kcal)} KCAL · P${fmtNum(tg.p)} C${fmtNum(tg.c)} F${fmtNum(tg.f)} · BY ${esc(String(diet.by)).toUpperCase()}</p><ul class="clist">` +
+      diet.meals.map((mm, i) => {
+        const meal = normMeal(mm, i);
+        return `<li><span><strong>${esc(meal.t)}${meal.time ? ` · ${esc(fmtClock(meal.time))}` : ''}</strong>${esc(meal.x)}${meal.kcal > 0 ? ` (${fmtNum(meal.kcal)} kcal · P${meal.p} C${meal.c} F${meal.f})` : ''}</span></li>`;
+      }).join('') + `</ul>`;
+  } else if (p && p.meals) {
+    html += '<p class="log-empty">Assessment template active — no custom plan yet.</p>';
+  } else {
+    html += '<p class="log-empty">No diet data.</p>';
+  }
+  const ate = dayIntake(m);
+  if (ate.count) {
+    const tg = getDietTargets(m);
+    html += `<p class="csub">TODAY: ATE ${fmtNum(ate.kcal)} / ${fmtNum(tg.kcal)} KCAL · P${fmtNum(Math.round(ate.p))}/${fmtNum(tg.p)} · C${fmtNum(Math.round(ate.c))}/${fmtNum(tg.c)} · F${fmtNum(Math.round(ate.f))}/${fmtNum(tg.f)} (${ate.count} ITEMS)</p>`;
+  }
+  return html;
+};
+
+/* ---------- trainer diet-dialog food finder + autosum (bound once) ---------- */
+(() => {
+  const dialog = document.getElementById('diet-dialog');
+  if (!dialog) return;
+  const input = document.getElementById('diet-find');
+  const gramsInput = document.getElementById('diet-find-grams');
+  const mealSel = document.getElementById('diet-find-meal');
+  const results = document.getElementById('diet-find-results');
+  input.addEventListener('input', () => {
+    const hits = searchFoods(input.value);
+    results.innerHTML = hits.map(f =>
+      `<button type="button" data-dfood="${esc(f[0])}"><strong>${esc(f[0])}</strong><span>100g: ${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</span><em>+</em></button>`
+    ).join('');
+  });
+  results.addEventListener('click', event => {
+    const btn = event.target.closest('[data-dfood]');
+    if (!btn) return;
+    const food = foodByName(btn.dataset.dfood);
+    if (!food) return;
+    const grams = Math.min(2000, Math.max(1, parseInt(gramsInput.value, 10) || 100));
+    const s = scaleFood(food, grams);
+    const block = dialog.querySelector(`.diet-meal[data-meal="${mealSel.value}"]`);
+    if (!block) return;
+    const box = block.querySelector('textarea');
+    const line = `${grams}g ${food[0]} — ${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f}`;
+    if (box) {
+      box.value = box.value ? `${box.value.replace(/\s+$/, '')}\n${line}` : line;
+      box.focus();
+    }
+    const acc = (k, v) => {
+      const inp = block.querySelector(`[data-mk="${k}"]`);
+      if (inp) inp.value = +(((parseFloat(inp.value) || 0) + v).toFixed(1));
+    };
+    acc('kcal', s.kcal); acc('p', s.p); acc('c', s.c); acc('f', s.f);
+  });
+  document.getElementById('diet-autosum').addEventListener('click', () => {
+    const sum = { kcal: 0, p: 0, c: 0, f: 0 };
+    dialog.querySelectorAll('.diet-meal').forEach(block => {
+      ['kcal', 'p', 'c', 'f'].forEach(k => {
+        const inp = block.querySelector(`[data-mk="${k}"]`);
+        sum[k] += (inp && parseFloat(inp.value)) || 0;
+      });
+    });
+    document.getElementById('diet-cal').value = Math.round(sum.kcal) || '';
+    document.getElementById('diet-pro').value = Math.round(sum.p) || '';
+    document.getElementById('diet-carb').value = Math.round(sum.c) || '';
+    document.getElementById('diet-fat').value = Math.round(sum.f) || '';
+  });
+})();
+
+/* ===========================================================================
+   AI FITNESS ASSISTANT — on-device smart coach for members.
+   Reads the member's real data (program, diet, tracker, measurements, streak)
+   and answers training / nutrition / recovery questions instantly, offline.
+   Set ONYX.AI_ENDPOINT to a POST JSON endpoint ({message, context} -> {reply})
+   to upgrade answers to a cloud LLM; the local brain stays as instant fallback.
+   The assistant NEVER replaces a qualified trainer or doctor — the disclaimer
+   is baked into the UI and every medical-adjacent answer.
+   =========================================================================== */
+ONYX.AI_ENDPOINT = ONYX.AI_ENDPOINT || '';
+const AI_SAFETY = 'I\u2019m an AI guide, not your trainer — and never a doctor. For injuries, medical conditions, or clinical nutrition needs, please talk to a qualified professional (or your ONYX coach).';
+let lastAIWorkout = null;
+
+const aiCoachName = user => {
+  if (!user.assignedCoach) return null;
+  const users = readUsers();
+  return (users[user.assignedCoach] && users[user.assignedCoach].name) || null;
+};
+const aiTodaySession = user => {
+  if (!user.plan) return { none: true };
+  const t = todaysSession(user);
+  if (!t) return { none: true };
+  if (t.rest) return { rest: true };
+  return { session: t.session, program: t.program, done: !!(user.workoutDone && user.workoutDone[dayKey()]) };
+};
+const aiWeightTrend = user => {
+  const ws = (user.measurements || []).filter(m => +m.weight > 0).slice(-4);
+  if (ws.length < 2) return null;
+  const first = +ws[0].weight, last = +ws[ws.length - 1].weight;
+  return { from: first, to: last, delta: +(last - first).toFixed(1), n: ws.length };
+};
+const aiWeekAdherence = user => {
+  const keys = Object.keys(user.foodLog || {}).sort().slice(-7);
+  const tg = getDietTargets(user);
+  if (!keys.length) return null;
+  const days = keys.map(k => (user.foodLog[k] || []).reduce((a, e) => a + (+e.kcal || 0), 0));
+  const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+  return { days: days.length, avg, target: tg.kcal };
+};
+const aiRecentWorkouts = (user, n = 14) => {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const k = dayKey(d);
+    if (user.workoutDone && user.workoutDone[k]) out.push(k);
+  }
+  return out;
+};
+
+/* ---------- intent answers (all user data escaped) ---------- */
+const aiMedical = () =>
+  `<p><strong>I'd rather be safe than helpful here.</strong> Pain, injuries, dizziness, blood pressure, diabetes, thyroid, pregnancy, medication — anything medical — is outside what I can advise on.</p><p>${AI_SAFETY}</p><p>If it hurts sharply, swells, or doesn't ease in a few days, stop training that area and get it checked before your next session.</p>`;
+
+const aiGreeting = user => {
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const stats = attendanceStats(user);
+  const train = t.session ? `Today is <strong>${esc(t.session.focus)}</strong> (${esc(t.session.items.length)} exercises)${t.done ? ' — already crushed ✓' : ''}.` : t.rest ? 'Today is a <strong>rest day</strong> — walk, stretch, sleep.' : 'No program yet — finish your assessment or start one from the library.';
+  return `<p>Namaste, <strong>${esc(user.name.split(' ')[0])}</strong> ✦ ${train}</p><p>Fuel: <strong>${fmtNum(ate.kcal)} / ${fmtNum(tg.kcal)} kcal</strong> so far · Streak: <strong>${stats.streak} days</strong>. Ask me about training, food, or recovery — e.g. "create a 45-min push workout".</p><p class="ai-fine">${AI_SAFETY}</p>`;
+};
+
+const aiPostWorkout = user => {
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const pLeft = Math.max(0, Math.round(tg.p - ate.p));
+  const whey = foodByName('Whey protein');
+  const banana = foodByName('Banana');
+  const w = whey ? scaleFood(whey, 30) : null;
+  const b = banana ? scaleFood(banana, 120) : null;
+  const trained = t.session ? `after <strong>${esc(t.session.focus)}</strong>` : 'after training';
+  return `<p>After training ${trained}, aim for <strong>30–50g protein + some carbs within 2 hours</strong> — protein rebuilds, carbs refill.</p><p>Easy combo: whey scoop (30g ≈ ${w ? `${w.kcal} kcal · P${w.p}` : '120 kcal · P24'}) + banana (≈ ${b ? `${b.kcal} kcal` : '105 kcal'}). Whole-food option: 4 eggs + 2 roti + curd.</p><p>You still have <strong>${fmtNum(pLeft)}g protein</strong> left in today's budget — log it in the tracker so I can keep count. <span class="ai-fine">General guidance; your coach fine-tunes portions to you.</span></p>`;
+};
+
+const aiMissed = user => {
+  const ap = user.activeProgram;
+  const coach = aiCoachName(user);
+  let chestDay = null;
+  if (ap && ap.week) chestDay = ap.week.find(d => /chest|push/i.test(d.focus || ''));
+  const recent = aiRecentWorkouts(user, 7).length;
+  return `<p>One missed session changes nothing — <strong>don't double up to "punish" yourself.</strong> Here's the fix:</p><ul><li><strong>Best:</strong> do ${chestDay ? `<strong>${esc(chestDay.label)} (${esc(chestDay.focus)})</strong>` : 'that session'} on your next rest day, then continue the week as written.</li><li><strong>Busy week?</strong> Merge: add 2 chest moves (bench + fly) to your next push/upper day.</li><li><strong>Missed 2+ weeks?</strong> Restart the current week fresh instead of cramming.</li></ul><p>You trained <strong>${recent} day${recent === 1 ? '' : 's'}</strong> this week — protect the streak, not the guilt.${coach ? ` Your coach <strong>${esc(coach)}</strong> can reshuffle your week in one message.` : ''}</p>`;
+};
+
+const aiPlateau = user => {
+  const trend = aiWeightTrend(user);
+  const adh = aiWeekAdherence(user);
+  const recent = aiRecentWorkouts(user, 14).length;
+  const tg = getDietTargets(user);
+  const goal = user.profile ? user.profile.goal : null;
+  let line1 = 'I need more data to diagnose you properly — log weight in Measurements and food in the tracker for a week.';
+  if (trend) {
+    const dir = trend.delta > 0 ? 'up' : trend.delta < 0 ? 'down' : 'flat';
+    line1 = `Your last ${trend.n} weigh-ins went <strong>${trend.from} → ${trend.to} kg (${dir})</strong>.`;
+  }
+  let line2 = 'No food logs this week — most "stuck" phases are untracked snacking, not a broken metabolism.';
+  if (adh) {
+    const diff = adh.avg - adh.target;
+    line2 = `You averaged <strong>${fmtNum(adh.avg)} kcal</strong> over ${adh.days} logged day${adh.days === 1 ? '' : 's'} vs a ${fmtNum(adh.target)} target (${diff > 0 ? '+' : ''}${fmtNum(diff)}). ${goal === 'lose' && diff > -100 ? 'For fat loss that gap is too small — tighten portions or add a walk.' : 'Consistency beats perfection — keep logging.'}`;
+  }
+  return `<p>${line1}</p><p>${line2}</p><ul><li><strong>Training:</strong> ${recent} sessions in 14 days — progressive overload + steps matter as much as diet.</li><li><strong>Weigh right:</strong> same time, morning, after bathroom; compare weekly averages, not days.</li><li><strong>Stuck 3+ weeks?</strong> That's when a coach earns their fee — ${aiCoachName(user) ? `ask <strong>${esc(aiCoachName(user))}</strong> to review this data.` : 'ask a coach to review your plan.'}</li></ul>`;
+};
+
+const aiProtein = user => {
+  const w = user.profile && +user.profile.weight;
+  const goal = (user.mainGoal && user.mainGoal.type) || (user.profile ? user.profile.goal : null);
+  const tg = getDietTargets(user);
+  const perKg = goal === 'lose' ? '2.0–2.2' : goal === 'build' || goal === 'strength' ? '1.8–2.2' : goal === 'endurance' ? '1.6–1.8' : '1.6–2.0';
+  const range = w ? ` — that's <strong>${Math.round(w * parseFloat(perKg))}–${Math.round(w * (parseFloat(perKg) + 0.2))}g</strong> at your ${w} kg` : '';
+  return `<p>Aim for <strong>${perKg}g protein per kg bodyweight</strong>${range}. Your plan targets <strong>${fmtNum(tg.p)}g/day</strong>.</p><p>Spread it over 3–4 meals (30–50g each absorbs best): eggs, paneer, chicken, dal + curd, whey on training days. Ask me <em>"protein in paneer"</em> for any food's numbers.</p>`;
+};
+
+const aiFoodQuery = (user, foodName, grams) => {
+  const clean = foodName.replace(/^(how many|how much|whats|what s|what is|tell me about|tell me|give me|a|an|the)\b\s*/, '').trim();
+  if (clean.length < 2) return `<p>Ask me like <em>"protein in eggs"</em> or <em>"calories in 150g chicken"</em> and I'll pull the numbers from my food database.</p>`;
+  const hits = searchFoods(clean);
+  if (!hits.length) return `<p>I couldn't find "<strong>${esc(foodName)}</strong>" in my 126-food database. Try a simpler name — <em>paneer, roti, whey, banana</em>.</p>`;
+  const f = hits[0];
+  const g = grams || f[6] || 100;
+  const s = scaleFood(f, g);
+  return `<p><strong>${esc(f[0])}</strong> — per 100g: <strong>${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</strong>.</p><p>${fmtNum(g)}g (${esc(f[5])} ≈ ${f[6]}g) = <strong>${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f}</strong>. Log it from the Diet tab's food search to count it today.</p>`;
+};
+
+const aiTargets = user => {
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const custom = !!(user.customDiet && user.customDiet.calories);
+  return `<p>Your daily targets${custom ? ` (set by your coach)` : ' (from your assessment)'}:</p><ul><li><strong>${fmtNum(tg.kcal)} kcal</strong> — eaten ${fmtNum(ate.kcal)}, ${fmtNum(Math.max(0, tg.kcal - ate.kcal))} left</li><li><strong>Protein ${fmtNum(tg.p)}g</strong> · <strong>Carbs ${fmtNum(tg.c)}g</strong> · <strong>Fat ${fmtNum(tg.f)}g</strong></li><li>Water: 3–4 litres, more on training days</li></ul>`;
+};
+
+const aiToday = user => {
+  const t = aiTodaySession(user);
+  if (t.session) return `<p>Today: <strong>${esc(t.session.focus)}</strong> — ${esc(t.session.label)} · ${esc(String(t.program))}${t.done ? ' ✓ done' : ''}.</p><ul>${t.session.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p>Warm up 5 minutes, rest 60–120s between sets. Mark it done on the Today tab when you finish.</p>`;
+  if (t.rest) return `<p>Today is a <strong>rest day</strong> — the gym floor is closed on Sundays. Walk 20–30 min, stretch hips + shoulders, sleep early. Growth happens between sessions.</p>`;
+  return `<p>No program on your account yet — finish the assessment or start any program from the library, and I'll brief you daily.</p>`;
+};
+
+const aiStreak = user => {
+  const stats = attendanceStats(user);
+  const recent = aiRecentWorkouts(user, 14).length;
+  return `<p>You're on a <strong>${stats.streak}-day streak</strong> (best: ${stats.best}) · <strong>${stats.total} visits</strong> logged · ${stats.monthDays} this month.</p><p>Workouts completed in the last 14 days: <strong>${recent}</strong>. ${stats.streak >= 7 ? 'That consistency is the whole game — protect it.' : 'Two sessions this week and the streak starts compounding.'}</p>`;
+};
+
+const aiPRs = user => {
+  const prs = (user.prs || []).slice(-5).reverse();
+  if (!prs.length) return `<p>No PRs logged yet — tell your coach (or log one) the next time you hit a big lift, and I'll track your strongest numbers here.</p>`;
+  return `<p>Your latest PRs:</p><ul>${prs.map(r => `<li><strong>${esc(r.lift)} — ${esc(String(r.weight))}kg</strong> · ${esc(fmtDate(r.date))}</li>`).join('')}</ul><p>Test a true max every 8–12 weeks, not every week — and always with a spotter or coach watching.</p>`;
+};
+
+const aiCoach = user => {
+  const coach = aiCoachName(user);
+  return coach
+    ? `<p>Your coach is <strong>${esc(coach)}</strong> — for program changes, injuries, or anything personal, they're the human to ask.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-coach">Open Coach Corner →</button></p>`
+    : `<p>No coach assigned yet — I can handle general guidance, but a human coach is worth it for personal programming. Ask at the front desk or message us and we'll match you.</p><p><button type="button" class="ai-goto" data-open-contact>Message the team →</button></p>`;
+};
+
+const aiWater = () => `<p>Target <strong>3–4 litres a day</strong>, +500–750ml per hour of training. Practical rule: carry the bottle, sip between sets, and check your urine — pale yellow means you're on track.</p>`;
+const aiRecovery = () => `<p>Sore, not sharp? That's DOMS — it peaks at 24–48h. Move gently (walk, light cycle), sleep 7–9 hours, eat your protein.</p><p><strong>Sharp, one-sided, or joint pain is different</strong> — stop training it and see a professional. ${AI_SAFETY}</p>`;
+const aiThanks = user => `<p>Anytime, <strong>${esc(user.name.split(' ')[0])}</strong> — now go earn the streak. 💪</p>`;
+const aiWho = () => `<p>I'm the <strong>ONYX AI assistant (beta)</strong> — I read your program, diet, tracker, and progress to answer personally. I can brief today's workout, build sessions, look up any food, and diagnose plateaus.</p><p class="ai-fine">${AI_SAFETY}</p>`;
+const aiFallback = () => `<p>I can help with <strong>training</strong> ("create a 45-min push workout"), <strong>food</strong> ("protein in eggs", "what to eat after workout"), and <strong>progress</strong> ("why is my weight stuck", "my streak").</p><p>Try one — or ask your coach for anything personal.</p>`;
+
+/* ---------- workout generator ---------- */
+const AI_EX = {
+  push: [['Barbell Bench Press', 4, '6–8'], ['Overhead Press', 4, '6–8'], ['Incline Dumbbell Press', 3, '8–10'], ['Dips', 3, '8–12'], ['Lateral Raises', 3, '12–15'], ['Cable Chest Fly', 3, '10–12'], ['Tricep Pushdown', 3, '10–12'], ['Overhead Extension', 3, '10–12']],
+  pull: [['Deadlift', 4, '5'], ['Pull-ups / Lat Pulldown', 4, '6–10'], ['Barbell Row', 4, '6–8'], ['Seated Cable Row', 3, '8–10'], ['Face Pulls', 3, '12–15'], ['Barbell Curl', 3, '8–10'], ['Hammer Curl', 3, '10–12'], ['Shrugs', 3, '12–15']],
+  legs: [['Back Squat', 4, '6–8'], ['Romanian Deadlift', 4, '8–10'], ['Leg Press', 3, '10–12'], ['Walking Lunges', 3, '12/leg'], ['Lying Leg Curl', 3, '10–12'], ['Hip Thrust', 3, '10–12'], ['Standing Calf Raise', 4, '12–15'], ['Bulgarian Split Squat', 3, '8/leg']],
+  chest: [['Barbell Bench Press', 4, '6–8'], ['Incline Dumbbell Press', 4, '8–10'], ['Dips', 3, '8–12'], ['Cable Chest Fly', 3, '10–12'], ['Push-ups', 3, 'max'], ['Decline Press', 3, '8–10']],
+  back: [['Deadlift', 4, '5'], ['Pull-ups / Lat Pulldown', 4, '6–10'], ['Barbell Row', 4, '6–8'], ['Seated Cable Row', 3, '8–10'], ['Straight-arm Pulldown', 3, '10–12'], ['Hyperextension', 3, '12–15']],
+  shoulders: [['Overhead Press', 4, '6–8'], ['Arnold Press', 3, '8–10'], ['Lateral Raises', 4, '12–15'], ['Rear-delt Fly', 3, '12–15'], ['Face Pulls', 3, '12–15'], ['Shrugs', 3, '12–15']],
+  arms: [['Barbell Curl', 4, '8–10'], ['Tricep Pushdown', 4, '8–10'], ['Hammer Curl', 3, '10–12'], ['Overhead Extension', 3, '10–12'], ['Preacher Curl', 3, '10–12'], ['Dips', 3, '8–12']],
+  core: [['Hanging Knee Raise', 3, '12–15'], ['Cable Crunch', 3, '12–15'], ['Plank', 3, '45–60s'], ['Russian Twist', 3, '20'], ['Ab Wheel', 3, '8–10'], ['Side Plank', 3, '30s/side']],
+  full: [['Back Squat', 4, '6–8'], ['Barbell Bench Press', 4, '6–8'], ['Barbell Row', 4, '6–8'], ['Overhead Press', 3, '8–10'], ['Romanian Deadlift', 3, '8–10'], ['Pull-ups / Lat Pulldown', 3, '6–10'], ['Plank', 3, '45–60s']],
+  upper: [['Barbell Bench Press', 4, '6–8'], ['Barbell Row', 4, '6–8'], ['Overhead Press', 3, '8–10'], ['Pull-ups / Lat Pulldown', 3, '6–10'], ['Lateral Raises', 3, '12–15'], ['Barbell Curl', 3, '8–10'], ['Tricep Pushdown', 3, '10–12']],
+  lower: [['Back Squat', 4, '6–8'], ['Romanian Deadlift', 4, '8–10'], ['Leg Press', 3, '10–12'], ['Walking Lunges', 3, '12/leg'], ['Lying Leg Curl', 3, '10–12'], ['Standing Calf Raise', 4, '12–15']],
+  hiit: [['Kettlebell Swings', 5, '40s on/20s off'], ['Box Jumps', 5, '40s on/20s off'], ['Battle Ropes', 5, '30s on/30s off'], ['Burpees', 4, '40s on/20s off'], ['Rowing Sprint', 4, '250m'], ['Mountain Climbers', 4, '40s on/20s off']]
+};
+const aiDetectFocus = q => {
+  if (/\bpush\b|chest|bench/.test(q)) return /back|pull/.test(q) ? 'upper' : /\bpush\b/.test(q) && !/chest/.test(q) ? 'push' : 'chest';
+  if (/\bpull\b|back\b|bicep|lat\b/.test(q)) return 'pull';
+  if (/\bleg\b|legs|squat|glute|quad|hamstring|calf|calves/.test(q)) return 'legs';
+  if (/shoulder|delt/.test(q)) return 'shoulders';
+  if (/\barm\b|arms|tricep/.test(q)) return 'arms';
+  if (/core|abs|ab |six.pack/.test(q)) return 'core';
+  if (/full.body|fullbody|full body/.test(q)) return 'full';
+  if (/upper/.test(q)) return 'upper';
+  if (/lower/.test(q)) return 'lower';
+  if (/hiit|cardio|condition|fat.burn|metcon/.test(q)) return 'hiit';
+  return 'full';
+};
+const aiDetectMinutes = q => {
+  const m = q.match(/(\d{2,3})\s*(?:min|m\b)/);
+  if (m) return Math.min(90, Math.max(20, parseInt(m[1], 10)));
+  if (/quick|short|busy/.test(q)) return 30;
+  return 45;
+};
+const aiGenerate = (user, q) => {
+  const focus = aiDetectFocus(q);
+  const mins = aiDetectMinutes(q);
+  const pool = AI_EX[focus] || AI_EX.full;
+  const count = mins <= 32 ? 5 : mins <= 52 ? 6 : Math.min(pool.length, 8);
+  const items = [`Warm-up — 5 min bike/row + arm circles + leg swings`, ...pool.slice(0, count).map(([n, s, r]) => `${n} — ${s} × ${r} (rest ${focus === 'hiit' ? 'as written' : s >= 4 ? '2–3 min' : '60–90s'})`), `Cool-down — 5 min easy cardio + full-body stretch`];
+  const label = `${mins}-Min ${focus.charAt(0).toUpperCase() + focus.slice(1)}`;
+  lastAIWorkout = { name: `${label} — AI Built`, focus: label, items };
+  return `<p>Here's your <strong>${label} workout</strong> (~${mins} min):</p><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p><button type="button" class="ai-goto" data-ai-save>Save to my programs →</button></p><p class="ai-fine">New to these lifts? Ask a coach to check your form on the big compounds first.</p>`;
+};
+
+/* ---------- router ---------- */
+const aiLocalReply = (text, user) => {
+  const q = ` ${String(text || '').toLowerCase()} `;
+  if (/\b(pain|hurts?|injur|doctor|diabet|thyroid|blood pressure|\bbp\b|pregnan|medic|dizz|joint|tear|sprain|surgery|depress|anxiet|eating disorder|steroid|chest pain|doctor)\b/.test(q)) return aiMedical();
+  if (/^(hi|hii+|hey|hello|yo|namaste|good (morning|afternoon|evening))\b/.test(q.trim())) return aiGreeting(user);
+  if (/who are you|what can you/.test(q)) return aiWho();
+  if (/(after|post)[-\s]?workout|what.*eat.*(after|train)/.test(q)) return aiPostWorkout(user);
+  const qc = q.replace(/\d+\s*g\b/g, ' ');
+  const fm = qc.match(/(?:calories|kcal|protein|carbs|fat|macros?|nutrition)\s+(?:are\s+)?(?:in|of)\s+([a-z][a-z\s\/\-.()]*)/)
+    || qc.match(/([a-z][a-z\s\/\-.()]*?)\s+(?:calories|kcal|nutrition|macros?)\b/)
+    || qc.match(/(?:protein|carbs|fat|calories|kcal)\s+does\s+([a-z][a-z\s\/\-.()]*?)(?:\s+have)?\s*$/);
+  if (fm) {
+    const gm = q.match(/(\d+)\s*g\b/);
+    return aiFoodQuery(user, fm[1].trim().replace(/\s+/g, ' '), gm ? parseInt(gm[1], 10) : null);
+  }
+  if (/(\bmiss(ed|ing)?|skipped|behind|couldn.?t (train|workout|go|make)|catch up|stop(ped)? (going|training))\b/.test(q) && !/rope|jump/.test(q)) return aiMissed(user);
+  if (/\bskipped?\b.*(day|workout|session|gym|chest|leg|push|pull)/.test(q)) return aiMissed(user);
+  if (/plateau|stuck|not losing|not gaining|weigh the same|no progress|scale (wont|won't|isnt|isn't|not|stuck)|stop(ped|s)?/.test(q) && /weight|los|gain|diet|fat|kg|scale|stuck|plateau|progress|eating|deficit/.test(q)) return aiPlateau(user);
+  if (/(diet|meal|food).{0,20}(plan|chart|suggest|idea|make|create)/.test(q)) return `<p>Your current targets: <strong>${fmtNum(getDietTargets(user).kcal)} kcal · P${fmtNum(getDietTargets(user).p)} C${fmtNum(getDietTargets(user).c)} F${fmtNum(getDietTargets(user).f)}</strong> — full plan's on your Diet tab.</p><p>Want changes? ${aiCoachName(user) ? `Message <strong>${esc(aiCoachName(user))}</strong> — they can rewrite your plan in minutes.` : 'A coach can build you a custom plan — ask at the front desk.'} Meanwhile, ask me <em>"protein in eggs"</em> for any food's numbers.</p>`;
+  if (/(create|make|generate|give|build|design|write).{0,30}(workout|session|training|exercise|routine|plan)|((push|pull|leg|chest|back|shoulder|arm|full.body|upper|lower|hiit|core)\s*(day|workout|session|routine))/.test(q)) return aiGenerate(user, q);
+  if (/protein/.test(q)) return aiProtein(user);
+  if (/calor|macros?\b|my target/.test(q)) return aiTargets(user);
+  if (/today.*(workout|train|session|exercise)|what.*(train|workout).*today|my workout\b/.test(q)) return aiToday(user);
+  if (/streak|attendance|check.?in|how many.*workout|workouts.*(done|last)|my progress/.test(q)) return aiStreak(user);
+  if (/\bprs?\b|personal record|max lift|strongest|1rm/.test(q)) return aiPRs(user);
+  if (/coach|trainer|human|expert|call me|contact|support/.test(q)) return aiCoach(user);
+  if (/water|hydrat|drink/.test(q)) return aiWater();
+  if (/sleep|sore|recover|tired|fatigue|doms|rest\b/.test(q)) return aiRecovery();
+  if (/thank|great|awesome|nice|bye|perfect/.test(q)) return aiThanks(user);
+  return aiFallback();
+};
+
+/* ---------- cloud endpoint seam (optional upgrade) ---------- */
+const aiViaEndpoint = async (user, text) => {
+  const url = ONYX.AI_ENDPOINT;
+  if (!url) return null;
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const context = {
+    name: user.name, goal: user.profile ? user.profile.goal : null,
+    weightKg: user.profile ? user.profile.weight : null, targetKg: user.profile ? user.profile.target : null,
+    program: user.activeProgram ? user.activeProgram.name : null,
+    todayWorkout: t.session ? `${t.session.label}: ${t.session.focus} (${t.session.items.length} exercises)` : t.rest ? 'Rest day' : 'No program',
+    targets: tg, eatenToday: { kcal: Math.round(ate.kcal), p: +ate.p.toFixed(1), c: +ate.c.toFixed(1), f: +ate.f.toFixed(1) },
+    streak: calcStreak(user.checkins), visits: (user.visits || []).length,
+    recentWeights: (user.measurements || []).filter(m => +m.weight > 0).slice(-4).map(m => m.weight),
+    prs: (user.prs || []).slice(-5), coach: aiCoachName(user)
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: String(text).slice(0, 500), context }), signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.reply ? String(data.reply) : null;
+  } catch (err) { clearTimeout(timer); return null; }
+};
+
+/* ---------- chat UI (bound once) ---------- */
+(() => {
+  const fab = document.getElementById('ai-fab');
+  if (!fab) return;
+  const dialog = document.getElementById('ai-dialog');
+  const msgs = document.getElementById('ai-msgs');
+  const chips = document.getElementById('ai-chips');
+  const form = document.getElementById('ai-form');
+  const input = document.getElementById('ai-input');
+  const QUICK = ['What should I eat after my workout?', 'I missed chest day — what now?', 'Why is my weight stuck?', 'Create a 45-min push workout', 'How much protein do I need?'];
+  let booted = false;
+  const scrollDown = () => { msgs.scrollTop = msgs.scrollHeight; };
+  const pushHist = (role, html) => {
+    const user = currentUser();
+    if (!user) return;
+    user.aiChat = user.aiChat || [];
+    user.aiChat.push({ r: role, h: String(html).slice(0, 4000) });
+    if (user.aiChat.length > 30) user.aiChat = user.aiChat.slice(-30);
+    saveCurrentUser(user);
+  };
+  const bubble = (role, html, save = true) => {
+    const div = document.createElement('div');
+    div.className = `ai-msg ${role}`;
+    div.innerHTML = html;
+    msgs.appendChild(div);
+    scrollDown();
+    if (save) pushHist(role, html);
+    return div;
+  };
+  const boot = () => {
+    if (booted) return;
+    booted = true;
+    chips.innerHTML = QUICK.map(q => `<button type="button" data-ai-chip="${esc(q)}">${esc(q)}</button>`).join('');
+    const user = currentUser();
+    if (!user) {
+      bubble('bot', `<p>Namaste ✦ I'm the ONYX AI coach — I read your program, diet, and progress to answer personally.</p><p><button type="button" class="ai-goto" data-ai-login>Log in to start →</button></p>`, false);
+      return;
+    }
+    (user.aiChat || []).forEach(m => bubble(m.r === 'u' ? 'user' : 'bot', m.h, false));
+    if (!(user.aiChat || []).length) bubble('bot', aiGreeting(user));
+  };
+  const send = async text => {
+    const clean = String(text || '').trim().slice(0, 300);
+    if (!clean) return;
+    const user = currentUser();
+    if (!user) { openAuth('Log in to chat with your AI coach.'); return; }
+    bubble('user', esc(clean));
+    input.value = '';
+    const typing = document.createElement('div');
+    typing.className = 'ai-msg bot ai-typing';
+    typing.innerHTML = '<span></span><span></span><span></span>';
+    msgs.appendChild(typing);
+    scrollDown();
+    let reply = await aiViaEndpoint(user, clean);
+    if (reply) reply = `<p>${esc(reply).replace(/\n/g, '<br />')}</p>`;
+    else {
+      await new Promise(r => setTimeout(r, 450 + Math.min(600, clean.length * 8)));
+      reply = aiLocalReply(clean, user);
+    }
+    typing.remove();
+    bubble('bot', reply);
+  };
+  fab.addEventListener('click', () => { boot(); dialog.showModal(); setTimeout(() => input.focus(), 50); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  form.addEventListener('submit', event => { event.preventDefault(); send(input.value); });
+  chips.addEventListener('click', event => {
+    const btn = event.target.closest('[data-ai-chip]');
+    if (btn) send(btn.dataset.aiChip);
+  });
+  msgs.addEventListener('click', event => {
+    if (event.target.closest('[data-ai-login]')) { dialog.close(); openAuth('Log in to chat with your AI coach.'); return; }
+    const go = event.target.closest('[data-ai-goto]');
+    if (go) {
+      dialog.close();
+      const el = document.getElementById(go.dataset.aiGoto);
+      if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+      return;
+    }
+    if (event.target.closest('[data-ai-save]')) {
+      const user = currentUser();
+      if (!user || !lastAIWorkout) return;
+      user.customPrograms = user.customPrograms || [];
+      user.customPrograms.push({
+        id: 'c' + Date.now().toString(36), name: lastAIWorkout.name, goal: user.profile ? user.profile.goal : '',
+        week: [{ label: 'Day 1', focus: lastAIWorkout.focus, items: [...lastAIWorkout.items] }],
+        official: false, builtin: false, author: user.name, email: user.email, createdAt: new Date().toISOString()
+      });
+      saveCurrentUser(user);
+      renderLibrary(user);
+      bubble('bot', `<p>Saved <strong>${esc(lastAIWorkout.name)}</strong> to your program library — start it anytime from below.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-library">Open library →</button></p>`);
+    }
+  });
+})();
+
+/* ===========================================================================
+   PERSONAL GOALS — member picks a primary goal; progress syncs live with real
+   data: measurements + check-in weights, food log, workouts, steps, PRs, streak.
+   =========================================================================== */
+const MAIN_GOALS = {
+  build: { emoji: '💪', label: 'Muscle gain', desc: 'Surplus, PRs, growth.', focus: 'HYPERTROPHY · PROTEIN FIRST' },
+  lose: { emoji: '🔥', label: 'Fat loss', desc: 'Sustainable deficit.', focus: 'DEFICIT · STEPS · CONSISTENCY' },
+  strength: { emoji: '🏋️', label: 'Strength', desc: 'Big lifts, big numbers.', focus: 'SQUAT · BENCH · DEADLIFT' },
+  endurance: { emoji: '🏃', label: 'Endurance', desc: 'Engine + stamina.', focus: 'STEPS · CONDITIONING' },
+  fit: { emoji: '⚡', label: 'General fitness', desc: 'Look good, feel good.', focus: 'BALANCE · STREAK · HEALTH' }
+};
+const lastNDayKeys = n => {
+  const out = [];
+  for (let i = 0; i < n; i++) { const d = new Date(); d.setDate(d.getDate() - i); out.push(dayKey(d)); }
+  return out;
+};
+const sumMacroDay = (user, key, k) => ((user.foodLog || {})[key] || []).reduce((a, e) => a + (+e[k] || 0), 0);
+const mergedWeights = (user, extra = []) => {
+  const all = [...(user.measurements || []).filter(m => +m.weight > 0).map(m => ({ d: String(m.d || '').slice(0, 10), weight: +m.weight })), ...extra];
+  const uniq = [];
+  all.forEach(w => { const i = uniq.findIndex(u => u.d === w.d); if (i >= 0) uniq[i] = w; else uniq.push(w); });
+  return uniq.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+};
+const bestWeight = user => {
+  const ws = mergedWeights(user);
+  if (ws.length) return ws[ws.length - 1].weight;
+  return user.profile && +user.profile.weight > 0 ? +user.profile.weight : null;
+};
+const big3Total = user => {
+  const find = re => {
+    const hits = (user.prs || []).filter(r => re.test(r.lift || ''));
+    return hits.length ? +hits[hits.length - 1].weight || 0 : 0;
+  };
+  const s = find(/squat/i), b = find(/bench|press/i), d = find(/deadlift/i);
+  return { s, b, d, total: s + b + d, count: [s, b, d].filter(Boolean).length };
+};
+
+const paintWeightCard = (user, ws) => {
+  const box = document.getElementById('goal-card');
+  if (!box) return;
+  const mg = user.mainGoal || {};
+  const targetForm = cur =>
+    `<form class="goal-target" id="goal-target-form"><input type="number" step="0.1" min="30" max="250" value="${cur || ''}" placeholder="Target kg — e.g. 68" required aria-label="Target weight in kg" /><button type="submit">Set target</button></form>`;
+  const uniq = [];
+  (ws || []).forEach(w => { const i = uniq.findIndex(u => u.d === w.d); if (i >= 0) uniq[i] = w; else uniq.push(w); });
+  uniq.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+  const p = user.profile || {};
+  const start = +mg.start > 0 ? +mg.start : uniq.length ? uniq[0].weight : +p.weight || 0;
+  const current = uniq.length ? uniq[uniq.length - 1].weight : +p.weight || 0;
+  const target = +mg.target > 0 ? +mg.target : +p.target || 0;
+  if (!start || !current) {
+    box.innerHTML = `<p class="log-empty">Log your weight to start tracking — save a weekly check-in and it lands here automatically.</p><p><button type="button" class="goal-link" data-goal-goto="profile-progress">Log a check-in →</button></p>`;
+    return;
+  }
+  if (!target || target === start) {
+    box.innerHTML = `<p class="goal-head">CURRENT <strong>${current} kg</strong></p><p class="log-empty">Set a target and I'll track every kilo with you.</p>${targetForm('')}`;
+    return;
+  }
+  const losing = target < start;
+  const total = Math.abs(target - start);
+  const done = losing ? start - current : current - start;
+  const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+  const remain = Math.abs(target - current);
+  const miles = [25, 50, 75, 100].filter(m => pct >= m);
+  box.innerHTML = `<p class="goal-head">${losing ? 'LOSE' : 'GAIN'} <strong>${+total.toFixed(1)} kg</strong></p>` +
+    `<p class="track-big"><strong>${pct}%</strong></p><span class="track-bar"><i style="width:${pct}%"></i></span>` +
+    (miles.length ? `<p class="goal-miles">${miles.map(m => `<span>🏁 ${m}%</span>`).join('')}</p>` : '') +
+    (pct >= 100 ? `<p class="goal-done">🎉 GOAL REACHED — set your next target below.</p>` : '') +
+    `<div class="goal-nums"><div><span>CURRENT</span><strong>${current} kg</strong></div><div><span>TARGET</span><strong>${target} kg</strong></div><div><span>${losing ? 'TO LOSE' : 'TO GAIN'}</span><strong>${+remain.toFixed(1)} kg</strong></div><div><span>STARTED</span><strong>${start} kg</strong></div></div>` +
+    targetForm(target);
+};
+
+const renderGoalMetrics = user => {
+  const box = document.getElementById('goal-metrics');
+  if (!box) return;
+  const type = (user.mainGoal && user.mainGoal.type) || 'fit';
+  const keys7 = lastNDayKeys(7);
+  const kcalAvg = Math.round(keys7.reduce((a, k) => a + sumMacroDay(user, k, 'kcal'), 0) / 7);
+  const proAvg = Math.round(keys7.reduce((a, k) => a + sumMacroDay(user, k, 'p'), 0) / 7);
+  const tg = getDietTargets(user);
+  const workouts14 = lastNDayKeys(14).filter(k => user.workoutDone && user.workoutDone[k]).length;
+  const streak = calcStreak(user.checkins);
+  const stepsToday = (user.stepsLog && user.stepsLog[dayKey()]) || 0;
+  const steps7 = keys7.reduce((a, k) => a + ((user.stepsLog && user.stepsLog[k]) || 0), 0);
+  const b3 = big3Total(user);
+  const tile = (v, l) => `<div><strong>${v}</strong><span>${l}</span></div>`;
+  const tiles = {
+    lose: tile(`${fmtNum(kcalAvg)} / ${fmtNum(tg.kcal)}`, 'AVG KCAL · 7 DAYS') + tile(workouts14, 'WORKOUTS · 14 DAYS') + tile(streak, 'DAY STREAK'),
+    build: tile(`${fmtNum(proAvg)} / ${fmtNum(tg.p)}g`, 'AVG PROTEIN · 7 DAYS') + tile((user.prs || []).length, 'PRS LOGGED') + tile(workouts14, 'WORKOUTS · 14 DAYS'),
+    strength: tile(b3.count ? `${fmtNum(b3.total)} kg` : '—', b3.count ? `BIG 3 TOTAL · S${b3.s} B${b3.b} D${b3.d}` : 'LOG SQUAT / BENCH / DEADLIFT PRS') + tile((user.prs || []).length, 'PRS LOGGED') + tile(workouts14, 'WORKOUTS · 14 DAYS'),
+    endurance: tile(fmtNum(stepsToday), 'STEPS TODAY') + tile(fmtNum(steps7), 'STEPS · 7 DAYS') + tile(streak, 'DAY STREAK'),
+    fit: tile(streak, 'DAY STREAK') + tile(workouts14, 'WORKOUTS · 14 DAYS') + tile((user.visits || []).length, 'TOTAL VISITS')
+  };
+  box.innerHTML = tiles[type] || tiles.fit;
+};
+
+const renderGoalList = user => {
+  const box = document.getElementById('goal-list');
+  if (!box) return;
+  box.innerHTML = (user.goals || []).length ? (user.goals || []).map(g => {
+    const pct = +g.target > 0 ? Math.min(100, Math.round(((+g.current || 0) / +g.target) * 100)) : 0;
+    return `<div class="goal-row"><div class="goal-row-main"><strong>${esc(g.title)}</strong><span>${esc(String(g.current))} / ${esc(String(g.target))} ${esc(g.unit)}${g.done ? ' · DONE ✓' : ''}</span><span class="track-bar"><i style="width:${pct}%"></i></span></div>` +
+      `<form data-goal-up="${g.id}"><input type="number" step="any" value="${+g.current || 0}" aria-label="Current value" /><button type="submit">Set</button></form><button type="button" data-goal-del="${g.id}" aria-label="Delete goal">×</button></div>`;
+  }).join('') : '<p class="log-empty">No custom goals yet — add your first below.</p>';
+};
+
+const renderGoals = user => {
+  const section = document.getElementById('profile-goals');
+  if (!section || !user) return;
+  section.hidden = false;
+  if (!user.mainGoal || !MAIN_GOALS[user.mainGoal.type]) {
+    const map = { build: 'build', lose: 'lose', fit: 'fit', athlete: 'fit' };
+    user.mainGoal = {
+      type: (user.profile && map[user.profile.goal]) || 'fit',
+      target: user.profile && +user.profile.target > 0 ? +user.profile.target : null,
+      start: null
+    };
+    saveCurrentUser(user);
+  }
+  document.getElementById('goal-pick').innerHTML = Object.entries(MAIN_GOALS).map(([k, g]) =>
+    `<button type="button" data-goal="${k}" class="${user.mainGoal.type === k ? 'is-on' : ''}" aria-pressed="${user.mainGoal.type === k}"><b>${g.emoji}</b><strong>${g.label}</strong><span>${g.desc}</span></button>`
+  ).join('');
+  renderGoalMetrics(user);
+  renderGoalList(user);
+  paintWeightCard(user, mergedWeights(user));
+  ProgressDB.all(user.email).then(entries => {
+    const extra = (entries || []).filter(e => +e.weight > 0).map(e => ({ d: String(e.dateISO || '').slice(0, 10), weight: +e.weight }));
+    if (extra.length) paintWeightCard(user, mergedWeights(user, extra));
+  }).catch(() => {});
+};
+
+/* Trainer client-file focus line. */
+const clientGoalLine = m => {
+  const t = m.mainGoal && MAIN_GOALS[m.mainGoal.type] ? m.mainGoal.type : null;
+  let extra = '';
+  const ws = mergedWeights(m);
+  if (m.mainGoal && +m.mainGoal.target > 0 && ws.length) {
+    const start = +m.mainGoal.start > 0 ? +m.mainGoal.start : ws[0].weight;
+    const cur = ws[ws.length - 1].weight;
+    const total = Math.abs(m.mainGoal.target - start);
+    const done = m.mainGoal.target < start ? start - cur : cur - start;
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+    extra = ` · ${start} → ${cur} / ${m.mainGoal.target} KG (${pct}%)`;
+  }
+  return `<p class="csub">FOCUS: ${t ? MAIN_GOALS[t].label.toUpperCase() : '—'}${esc(extra)}</p>`;
+};
+
+/* ---------- goals events (bound once, delegated) ---------- */
+(() => {
+  const section = document.getElementById('profile-goals');
+  if (!section) return;
+  section.addEventListener('click', event => {
+    const pick = event.target.closest('[data-goal]');
+    const user = currentUser();
+    if (pick && user) {
+      if (!user.mainGoal || user.mainGoal.type !== pick.dataset.goal) {
+        user.mainGoal = { type: pick.dataset.goal, target: null, start: bestWeight(user) };
+        saveCurrentUser(user);
+        renderGoals(user);
+      }
+      return;
+    }
+    const go = event.target.closest('[data-goal-goto]');
+    if (go) {
+      const el = document.getElementById(go.dataset.goalGoto);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const del = event.target.closest('[data-goal-del]');
+    if (del && user) {
+      user.goals = (user.goals || []).filter(g => g.id !== del.dataset.goalDel);
+      saveCurrentUser(user);
+      renderGoalList(user);
+    }
+  });
+  section.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const form = event.target;
+    if (form.id === 'goal-target-form') {
+      const v = parseFloat(form.querySelector('input').value);
+      if (!(v >= 30 && v <= 250)) return;
+      user.mainGoal = user.mainGoal || { type: 'fit', start: null };
+      user.mainGoal.target = +v.toFixed(1);
+      if (!(+user.mainGoal.start > 0)) user.mainGoal.start = bestWeight(user);
+      saveCurrentUser(user);
+      renderGoals(user);
+      return;
+    }
+    if (form.id === 'goal-add-form') {
+      const title = form.elements.title.value.trim().slice(0, 50);
+      const target = parseFloat(form.elements.target.value);
+      const unit = form.elements.unit.value.trim().slice(0, 10) || 'units';
+      if (!title || !(target > 0)) return;
+      user.goals = user.goals || [];
+      user.goals.push({ id: 'g' + Date.now().toString(36), title, target, unit, current: 0, done: false });
+      saveCurrentUser(user);
+      form.reset();
+      renderGoalList(user);
+      return;
+    }
+    const upWrap = event.target.closest('form[data-goal-up]');
+    if (upWrap) {
+      const g = (user.goals || []).find(x => x.id === upWrap.dataset.goalUp);
+      if (!g) return;
+      const v = parseFloat(upWrap.querySelector('input').value);
+      if (!(v >= 0)) return;
+      g.current = v;
+      g.done = v >= +g.target && +g.target > 0;
+      saveCurrentUser(user);
+      renderGoalList(user);
+    }
+  });
+})();
+
+/* ===========================================================================
+   CHALLENGES & GAMIFICATION — derived points/levels (always consistent, never
+   double-counted), 14 auto-tracked challenges, same-browser leaderboards,
+   level-based rewards. All computed live from real member data.
+   =========================================================================== */
+const LEVELS = [[0, 'Rookie'], [100, 'Regular'], [250, 'Committed'], [500, 'Grinder'], [1000, 'Athlete'], [1750, 'Elite'], [2750, 'Legend'], [4000, 'Icon']];
+const levelOf = pts => {
+  let idx = 0;
+  LEVELS.forEach(([need], i) => { if (pts >= need) idx = i; });
+  const next = LEVELS[idx + 1] || null;
+  const base = LEVELS[idx][0];
+  const pct = next ? Math.min(100, Math.round(((pts - base) / (next[0] - base)) * 100)) : 100;
+  return { n: idx + 1, name: LEVELS[idx][1], pts, next: next ? next[0] : null, pct };
+};
+const proteinStreak = u => {
+  const tg = getDietTargets(u).p || 0;
+  if (!tg) return 0;
+  const keys = lastNDayKeys(30);
+  let n = 0;
+  const start = sumMacroDay(u, keys[0], 'p') >= tg ? 0 : 1;
+  for (let i = start; i < keys.length; i++) {
+    if (sumMacroDay(u, keys[i], 'p') >= tg) n++;
+    else break;
+  }
+  return n;
+};
+const logStreak = u => {
+  const keys = lastNDayKeys(60);
+  let n = 0;
+  const start = ((u.foodLog || {})[keys[0]] || []).length ? 0 : 1;
+  for (let i = start; i < keys.length; i++) {
+    if (((u.foodLog || {})[keys[i]] || []).length) n++;
+    else break;
+  }
+  return n;
+};
+const weightGoalPct = u => {
+  const mg = u.mainGoal || {};
+  const ws = mergedWeights(u);
+  const target = +mg.target > 0 ? +mg.target : (u.profile && +u.profile.target) || 0;
+  if (!target || !ws.length) return 0;
+  const start = +mg.start > 0 ? +mg.start : ws[0].weight;
+  const cur = ws[ws.length - 1].weight;
+  const total = Math.abs(target - start);
+  if (!total) return 0;
+  const done = target < start ? start - cur : cur - start;
+  return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+};
+const CHALLENGES = [
+  { id: 'first', emoji: '👣', name: 'First Check-In', desc: 'Walk through the door once.', target: 1, reward: 25, prog: u => (u.visits || []).length },
+  { id: 'streak7', emoji: '🔥', name: 'Week Warrior', desc: '7-day check-in streak.', target: 7, reward: 50, prog: u => calcStreak(u.checkins) },
+  { id: 'streak30', emoji: '♾️', name: 'Unstoppable', desc: '30-day check-in streak.', target: 30, reward: 200, prog: u => calcStreak(u.checkins) },
+  { id: 'club100', emoji: '💯', name: 'Century Club', desc: '100 all-time visits.', target: 100, reward: 300, prog: u => (u.visits || []).length },
+  { id: 'steps10k', emoji: '👟', name: '10K Day', desc: '10,000 steps in one day.', target: 10000, reward: 60, prog: u => Math.max(0, ...Object.values(u.stepsLog || {})) },
+  { id: 'steps70k', emoji: '🚀', name: 'Step Machine', desc: '70,000 steps in 7 days.', target: 70000, reward: 120, prog: u => lastNDayKeys(7).reduce((a, k) => a + ((u.stepsLog || {})[k] || 0), 0) },
+  { id: 'protein5', emoji: '🍗', name: 'Protein Streak', desc: 'Hit protein 5 days straight.', target: 5, reward: 100, prog: u => proteinStreak(u) },
+  { id: 'log7', emoji: '📝', name: 'Consistent Logger', desc: 'Log food 7 days straight.', target: 7, reward: 80, prog: u => logStreak(u) },
+  { id: 'pr1', emoji: '🏅', name: 'PR Hunter', desc: 'Log your first PR.', target: 1, reward: 50, prog: u => (u.prs || []).length },
+  { id: 'squat', emoji: '🦵', name: 'Squat PR', desc: 'Log a squat personal record.', target: 1, reward: 60, prog: u => (u.prs || []).filter(r => /squat/i.test(r.lift || '')).length },
+  { id: 'workouts50', emoji: '⚒️', name: 'Half Century', desc: 'Complete 50 workouts.', target: 50, reward: 150, prog: u => Object.keys(u.workoutDone || {}).length },
+  { id: 'goal100', emoji: '🎯', name: 'Goal Crusher', desc: 'Reach your weight goal.', target: 100, reward: 150, prog: u => weightGoalPct(u) },
+  { id: 'transform4', emoji: '📸', name: 'Transformation', desc: 'Log 4 weekly check-ins.', target: 4, reward: 120, prog: u => u.checkinCount || 0 },
+  { id: 'early5', emoji: '🌅', name: 'Early Bird', desc: '5 check-ins before 8 AM.', target: 5, reward: 70, prog: u => (u.visits || []).filter(v => new Date(v.at).getHours() < 8).length }
+];
+const pointsOf = u => {
+  if (!u) return 0;
+  const visits = (u.visits || []).length;
+  const workouts = Object.keys(u.workoutDone || {}).length;
+  const foodDays = Object.keys(u.foodLog || {}).filter(k => (u.foodLog[k] || []).length).length;
+  const prs = (u.prs || []).length;
+  const measures = (u.measurements || []).length;
+  const goalsDone = (u.goals || []).filter(g => g.done).length;
+  const checkins = u.checkinCount || 0;
+  let pts = visits * 10 + workouts * 20 + foodDays * 5 + prs * 50 + measures * 10 + goalsDone * 100 + checkins * 30;
+  CHALLENGES.forEach(c => {
+    let cur = 0;
+    try { cur = c.prog(u) || 0; } catch (err) { cur = 0; }
+    if (cur >= c.target) pts += c.reward;
+  });
+  return pts;
+};
+const REWARDS = [
+  { level: 2, emoji: '🎟️', text: 'Free guest pass — bring a friend' },
+  { level: 3, emoji: '🥤', text: '10% off shakers & merch' },
+  { level: 4, emoji: '🥗', text: 'Free diet-plan review with a coach' },
+  { level: 5, emoji: '👕', text: '15% off ONYX merch + 2 guest passes' },
+  { level: 6, emoji: '💪', text: 'Free personal-training session' },
+  { level: 7, emoji: '🏆', text: 'Limited ONYX athlete tee' },
+  { level: 8, emoji: '👑', text: 'Founders wall feature + 25% off renewal' }
+];
+let boardMode = 'visits';
+
+const renderChallenges = user => {
+  const section = document.getElementById('profile-challenges');
+  if (!section || !user) return;
+  section.hidden = false;
+  const lv = levelOf(pointsOf(user));
+  document.getElementById('ch-level').innerHTML =
+    `<div class="ch-level-badge"><b>LV ${lv.n}</b><strong>${esc(lv.name)}</strong><span>${fmtNum(lv.pts)} PTS${lv.next ? ` · ${fmtNum(lv.next - lv.pts)} TO LV ${lv.n + 1}` : ' · MAX LEVEL'}</span></div>` +
+    `<span class="ch-bar"><i style="width:${lv.pct}%"></i></span>`;
+  document.getElementById('ch-grid').innerHTML = CHALLENGES.map(c => {
+    let cur = 0;
+    try { cur = c.prog(user) || 0; } catch (err) { cur = 0; }
+    const done = cur >= c.target;
+    const pct = Math.min(100, Math.round((cur / c.target) * 100));
+    return `<div class="ch-card${done ? ' is-done' : ''}"><b>${c.emoji}</b><div><strong>${esc(c.name)}${done ? ' 🏆' : ''}</strong><span>${esc(c.desc)}</span>` +
+      `<span class="ch-bar"><i style="width:${pct}%"></i></span><em>${fmtNum(Math.min(cur, c.target))} / ${fmtNum(c.target)} · +${c.reward} PTS</em></div></div>`;
+  }).join('');
+  const doneIds = CHALLENGES.filter(c => { try { return (c.prog(user) || 0) >= c.target; } catch (err) { return false; } }).map(c => c.id);
+  user.notifChalls = user.notifChalls || [];
+  const fresh = doneIds.filter(id => !user.notifChalls.includes(id));
+  if (fresh.length || (user.notifLevel || 1) < lv.n) {
+    fresh.forEach(id => { const c = CHALLENGES.find(x => x.id === id); if (c) pushNotif(user, '🏆', `Challenge complete: ${c.name} (+${c.reward} pts)!`); });
+    if ((user.notifLevel || 1) < lv.n) pushNotif(user, '⭐', `Level up! You are now LV ${lv.n} ${lv.name}.`);
+    user.notifChalls = doneIds;
+    user.notifLevel = lv.n;
+    saveCurrentUser(user);
+  }
+  document.getElementById('ch-month').textContent = new Date().toLocaleDateString('en-IN', { month: 'long' }).toUpperCase();
+  renderBoard(user);
+  document.getElementById('ch-rewards').innerHTML = REWARDS.map(r => {
+    const unlocked = lv.n >= r.level;
+    return `<div class="ch-reward${unlocked ? ' is-open' : ''}"><b>${unlocked ? r.emoji : '🔒'}</b><div><strong>${esc(r.text)}</strong><span>${unlocked ? 'UNLOCKED — CLAIM AT FRONT DESK' : `UNLOCKS AT LV ${r.level}`}</span></div></div>`;
+  }).join('');
+};
+
+const renderBoard = me => {
+  const box = document.getElementById('ch-board');
+  if (!box || !me) return;
+  document.querySelectorAll('#ch-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.board === boardMode));
+  const month = dayKey().slice(0, 7);
+  const rows = Object.values(readUsers())
+    .filter(u => u && !isCoach(u) && u.name)
+    .map(u => {
+      let best = 0;
+      try { best = attendanceStats(u).best || 0; } catch (err) { best = 0; }
+      return {
+        name: u.name, me: u.email === me.email,
+        visits: (u.visits || []).filter(v => String(v.at || '').slice(0, 7) === month).length,
+        points: pointsOf(u), streak: best
+      };
+    })
+    .sort((a, b) => b[boardMode] - a[boardMode])
+    .slice(0, 10);
+  const medals = ['🥇', '🥈', '🥉'];
+  const unit = boardMode === 'visits' ? 'visits' : boardMode === 'points' ? 'pts' : 'days';
+  box.innerHTML = rows.length ? rows.map((r, i) =>
+    `<div class="ch-row${r.me ? ' is-me' : ''}"><b>${medals[i] || `#${i + 1}`}</b><strong>${esc(r.name)}${r.me ? ' (YOU)' : ''}</strong><span>${fmtNum(r[boardMode])} ${unit}</span></div>`
+  ).join('') : '<p class="log-empty">No members on this device yet.</p>';
+  if (rows.length > 1) {
+    const rank = rows.findIndex(r => r.me);
+    if (rank >= 0) box.innerHTML += `<p class="ch-rank">You rank <strong>#${rank + 1}</strong> of ${rows.length} this month.</p>`;
+  }
+};
+
+/* ---------- challenges events (bound once) ---------- */
+(() => {
+  const tabs = document.getElementById('ch-tabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-board]');
+    if (!btn) return;
+    boardMode = btn.dataset.board;
+    const user = currentUser();
+    if (user) renderBoard(user);
+  });
+})();
+
+/* ===========================================================================
+   COMMUNICATION — notification center (computed alerts + stored updates),
+   image messages, WhatsApp deep-links. True auto-SMS/push needs the backend;
+   everything here is the frontend half: computed live from real member data.
+   =========================================================================== */
+const pushNotif = (u, icon, text) => {
+  u.notifs = u.notifs || [];
+  u.notifs.unshift({ id: 'n' + Date.now().toString(36) + Math.floor(Math.random() * 90 + 10), icon, text: String(text).slice(0, 200), at: new Date().toISOString(), read: false });
+  if (u.notifs.length > 30) u.notifs.length = 30;
+};
+const readImageCapped = file => new Promise(resolve => {
+  try {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k));
+      c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  } catch (err) { resolve(null); }
+});
+const pruneThreadImages = u => {
+  const imgs = [];
+  Object.values(u.threads || {}).forEach(t => (t || []).forEach(m => { if (m.img) imgs.push(m); }));
+  imgs.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  while (imgs.length > 20) { const m = imgs.shift(); m.img = null; if (!m.text) m.text = '[photo expired]'; }
+};
+const computeNotifs = user => {
+  const out = [];
+  const today = dayKey();
+  if (user.plan && user.expiresAt) {
+    const left = Math.ceil((new Date(user.expiresAt) - Date.now()) / 86400000);
+    if (left < 0) out.push({ key: 'exp', icon: '⛔', text: 'Membership expired — renew to unlock training & diet plans.', goto: 'profile-membership' });
+    else if (left <= 7) out.push({ key: 'exp', icon: '⚠️', text: `Membership expires in ${left} day${left === 1 ? '' : 's'} (${fmtDate(user.expiresAt)}). Renew soon.`, goto: 'profile-membership' });
+  }
+  if (user.pendingPayment && !user.plan) out.push({ key: 'pend', icon: '💳', text: `Payment for ${user.pendingPayment.plan} confirming — ref ${user.pendingPayment.ref}.`, goto: 'profile-membership' });
+  let unread = 0;
+  Object.entries(user.threads || {}).forEach(([c, msgs]) => {
+    unread += (msgs || []).filter(m => m.from === 'coach' && m.at > ((user.coachReadAt || {})[c] || '')).length;
+  });
+  if (unread) out.push({ key: 'msg', icon: '💬', text: `${unread} unread trainer message${unread === 1 ? '' : 's'} — open Coach Corner.`, goto: 'profile-coach' });
+  const d2 = new Date();
+  d2.setDate(d2.getDate() + 2);
+  const soon = (user.sessions || []).filter(s => s.status === 'scheduled' && s.date >= today && s.date <= dayKey(d2))
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  if (soon.length) out.push({ key: 'sess', icon: '📅', text: `${soon.length} session${soon.length === 1 ? '' : 's'} booked — next ${fmtDate(`${soon[0].date}T12:00:00`)} ${soon[0].time}.`, goto: 'profile-coach' });
+  const visits = user.visits || [];
+  if (user.plan && visits.length) {
+    const gap = Math.floor((Date.now() - new Date(visits[visits.length - 1].at)) / 86400000);
+    if (gap >= 5) out.push({ key: 'away', icon: '👋', text: `We haven't seen you in ${gap} days — ready for your next workout?`, goto: 'profile-today' });
+  }
+  const st = calcStreak(user.checkins);
+  if (st >= 3 && !(user.checkins || []).includes(today)) out.push({ key: 'streak', icon: '🔥', text: `${st}-day streak at risk — train today to keep it alive.`, goto: 'profile-today' });
+  if (user.dob && String(user.dob).slice(5) === today.slice(5)) out.push({ key: 'bday', icon: '🎂', text: `Happy Birthday, ${user.name.split(' ')[0]}! Show this for 15% off your next renewal.` });
+  return out;
+};
+const unseenNotifs = user => {
+  const snooze = user.notifSnooze || {};
+  const today = dayKey();
+  const attn = computeNotifs(user).filter(n => snooze[n.key] !== today);
+  const fresh = (user.notifs || []).filter(n => !n.read);
+  return { attn, fresh, count: attn.length + fresh.length };
+};
+
+const renderNotifs = user => {
+  const section = document.getElementById('profile-notifs');
+  if (!section || !user) return;
+  section.hidden = false;
+  const { attn, fresh } = unseenNotifs(user);
+  const stored = user.notifs || [];
+  document.getElementById('nt-attn').innerHTML = attn.length ? attn.map(n =>
+    `<div class="nt-row is-attn"><b>${n.icon}</b><span>${esc(n.text)}</span>` +
+    `${n.goto ? `<button type="button" data-nt-goto="${n.goto}">View</button>` : ''}<button type="button" data-nt-snooze="${n.key}" aria-label="Dismiss">×</button></div>`
+  ).join('') : '<p class="log-empty">All clear — nothing needs you right now. ✓</p>';
+  document.getElementById('nt-list').innerHTML = stored.length ? stored.map(n =>
+    `<div class="nt-row${n.read ? '' : ' is-new'}"><b>${esc(n.icon || '🔔')}</b><span>${esc(n.text)}<small>${esc(fmtDate(n.at))}</small></span></div>`
+  ).join('') : '<p class="log-empty">Updates from your coach, plans, and challenges land here.</p>';
+  const bell = document.getElementById('nt-count');
+  if (bell) {
+    const c = attn.length + fresh.length;
+    bell.hidden = c === 0;
+    bell.textContent = c > 9 ? '9+' : c;
+  }
+  const dob = document.getElementById('nt-dob');
+  if (dob && !dob.value && user.dob) dob.value = user.dob;
+  const phone = document.getElementById('nt-phone');
+  if (phone && !phone.value && user.phone) phone.value = user.phone;
+  const wa = document.getElementById('nt-wa');
+  if (wa) wa.href = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(`Hi ONYX, I'm ${user.name} (${user.email}). Send me workout reminders on WhatsApp.`)}`;
+};
+
+/* ---------- notifications events (bound once) ---------- */
+(() => {
+  const bell = document.getElementById('nt-bell');
+  if (bell) bell.addEventListener('click', () => {
+    const el = document.getElementById('profile-notifs');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const section = document.getElementById('profile-notifs');
+  if (!section) return;
+  section.addEventListener('click', event => {
+    const user = currentUser();
+    if (!user) return;
+    const go = event.target.closest('[data-nt-goto]');
+    if (go) {
+      const el = document.getElementById(go.dataset.ntGoto);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const sn = event.target.closest('[data-nt-snooze]');
+    if (sn) {
+      user.notifSnooze = user.notifSnooze || {};
+      user.notifSnooze[sn.dataset.ntSnooze] = dayKey();
+      saveCurrentUser(user);
+      renderNotifs(user);
+      return;
+    }
+    if (event.target.closest('#nt-readall')) {
+      (user.notifs || []).forEach(n => { n.read = true; });
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
+  });
+  section.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    if (event.target.id === 'nt-dob-form') {
+      const v = document.getElementById('nt-dob').value;
+      if (!v) return;
+      user.dob = v;
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
+    if (event.target.id === 'nt-phone-form') {
+      const v = document.getElementById('nt-phone').value.replace(/\D/g, '').slice(-10);
+      if (v.length !== 10) return;
+      user.phone = v;
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
+  });
+})();
+
+/* ===========================================================================
+   PT BOOKING — trainers set weekly availability; members request slots;
+   trainers confirm/decline. Sessions carry coach + booker for conflict checks.
+   =========================================================================== */
+const BK_TYPES = ['Personal training', 'Consultation', 'Diet consultation', 'Fitness assessment'];
+const BK_SLOTS = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
+const BK_DAYS = [[1, 'MON'], [2, 'TUE'], [3, 'WED'], [4, 'THU'], [5, 'FRI'], [6, 'SAT']];
+let bkSel = { trainer: null, type: BK_TYPES[0], date: null, time: null };
+let availDay = (() => { const d = new Date().getDay(); return d === 0 ? 1 : d; })();
+const coachList = () => Object.values(readUsers()).filter(u => u && isCoach(u) && u.name);
+const coachAvail = c => (c.availability && typeof c.availability === 'object' ? c.availability : {});
+const trainerBusy = (email, date, time) => Object.values(readUsers()).some(u => (u.sessions || []).some(s =>
+  (s.status === 'scheduled' || s.status === 'requested') && s.date === date && s.time === time && (!s.coach || s.coach === email)));
+const memberBusy = (user, date, time) => (user.sessions || []).some(s =>
+  (s.status === 'scheduled' || s.status === 'requested') && s.date === date && s.time === time);
+
+const renderBooking = user => {
+  const section = document.getElementById('profile-booking');
+  if (!section || !user) return;
+  section.hidden = false;
+  const coaches = coachList();
+  if (!bkSel.trainer || !coaches.some(c => c.email === bkSel.trainer)) {
+    bkSel.trainer = (user.assignedCoach && coaches.some(c => c.email === user.assignedCoach)) ? user.assignedCoach : (coaches[0] && coaches[0].email) || null;
+    bkSel.date = null;
+    bkSel.time = null;
+  }
+  document.getElementById('bk-trainers').innerHTML = coaches.length ? coaches.map(c =>
+    `<button type="button" data-bk-trainer="${esc(c.email)}" class="${bkSel.trainer === c.email ? 'is-on' : ''}"><strong>${esc(c.name)}</strong><span>${c.email === user.assignedCoach ? 'YOUR COACH' : esc(c.email)}</span></button>`
+  ).join('') : '<p class="log-empty">No trainers on this device yet — add a coach account to enable booking.</p>';
+  document.getElementById('bk-type').value = bkSel.type;
+  const dates = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    if (d.getDay() === 0) continue;
+    dates.push(d);
+  }
+  if (bkSel.date && !dates.some(d => dayKey(d) === bkSel.date)) { bkSel.date = null; bkSel.time = null; }
+  document.getElementById('bk-dates').innerHTML = dates.map(d => {
+    const k = dayKey(d);
+    const label = d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+    return `<button type="button" data-bk-date="${k}" class="${bkSel.date === k ? 'is-on' : ''}">${label}</button>`;
+  }).join('');
+  const coach = coaches.find(c => c.email === bkSel.trainer);
+  let slotsHtml = '<p class="log-empty">Pick a date to see open slots.</p>';
+  if (coach && bkSel.date) {
+    const dow = String(new Date(`${bkSel.date}T12:00:00`).getDay());
+    const open = coachAvail(coach)[dow] || [];
+    if (!open.length) slotsHtml = '<p class="log-empty">Trainer is off that day — try another date.</p>';
+    else slotsHtml = open.map(t => {
+      const busy = trainerBusy(coach.email, bkSel.date, t) || memberBusy(user, bkSel.date, t);
+      return `<button type="button" data-bk-time="${t}" class="${bkSel.time === t ? 'is-on' : ''}"${busy ? ' disabled' : ''}>${busy ? '❌' : '✅'} ${esc(fmtClock(t))}</button>`;
+    }).join('');
+  } else if (!coach) slotsHtml = '<p class="log-empty">Pick a trainer first.</p>';
+  document.getElementById('bk-slots').innerHTML = slotsHtml;
+  const btn = document.getElementById('bk-confirm');
+  const ready = coach && bkSel.date && bkSel.time;
+  btn.disabled = !ready;
+  btn.textContent = ready ? `Request ${bkSel.type} · ${fmtDate(`${bkSel.date}T12:00:00`)} ${fmtClock(bkSel.time)}` : 'Pick trainer, date & time';
+  const mine = (user.sessions || []).filter(s => s.status === 'scheduled' || s.status === 'requested')
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  document.getElementById('bk-mine').innerHTML = mine.length ? mine.map(s =>
+    `<div class="nt-row"><b>📅</b><span><strong>${esc(s.type || 'Session')}</strong> · ${esc(fmtDate(`${s.date}T12:00:00`))} ${esc(fmtClock(s.time))}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}<small>${s.coach ? esc((readUsers()[s.coach] || {}).name || s.coach) : 'ONYX coach'}</small></span><button type="button" data-bk-cancel="${s.id}">Cancel</button></div>`
+  ).join('') : '<p class="log-empty">No upcoming bookings.</p>';
+};
+
+const renderAvail = coach => {
+  const days = document.getElementById('avail-days');
+  const slots = document.getElementById('avail-slots');
+  if (!days || !slots || !coach) return;
+  days.innerHTML = BK_DAYS.map(([n, label]) =>
+    `<button type="button" data-avail-day="${n}" class="${availDay === n ? 'is-on' : ''}">${label}</button>`).join('');
+  const open = coachAvail(coach)[String(availDay)] || [];
+  slots.innerHTML = BK_SLOTS.map(t =>
+    `<button type="button" data-avail-time="${t}" class="${open.includes(t) ? 'is-on' : ''}">${esc(fmtClock(t))}</button>`).join('');
+};
+
+/* ---------- booking events (bound once) ---------- */
+(() => {
+  const section = document.getElementById('profile-booking');
+  if (section) {
+    section.addEventListener('click', event => {
+      const user = currentUser();
+      if (!user) return;
+      const tr = event.target.closest('[data-bk-trainer]');
+      if (tr) { bkSel.trainer = tr.dataset.bkTrainer; bkSel.date = null; bkSel.time = null; renderBooking(user); return; }
+      const dt = event.target.closest('[data-bk-date]');
+      if (dt) { bkSel.date = dt.dataset.bkDate; bkSel.time = null; renderBooking(user); return; }
+      const tm = event.target.closest('[data-bk-time]');
+      if (tm && !tm.disabled) { bkSel.time = tm.dataset.bkTime; renderBooking(user); return; }
+      const cancel = event.target.closest('[data-bk-cancel]');
+      if (cancel) {
+        const s = (user.sessions || []).find(x => x.id === cancel.dataset.bkCancel);
+        if (s && (s.status === 'scheduled' || s.status === 'requested')) {
+          s.status = 'cancelled';
+          saveCurrentUser(user);
+          renderBooking(user);
+          renderCoachSection(user);
+          renderNotifs(user);
+        }
+      }
+    });
+    document.getElementById('bk-type').addEventListener('change', event => {
+      bkSel.type = event.target.value;
+      const user = currentUser();
+      if (user) renderBooking(user);
+    });
+    document.getElementById('bk-confirm').addEventListener('click', () => {
+      const user = currentUser();
+      const coach = coachList().find(c => c.email === bkSel.trainer);
+      if (!user || !coach || !bkSel.date || !bkSel.time) return;
+      if (user.suspended) { pushNotif(user, '⛔', 'Booking blocked — your account is suspended. Please contact the front desk.'); saveCurrentUser(user); renderNotifs(user); return; }
+      if (trainerBusy(coach.email, bkSel.date, bkSel.time) || memberBusy(user, bkSel.date, bkSel.time)) { renderBooking(user); return; }
+      user.sessions = user.sessions || [];
+      user.sessions.push({ id: 's' + Date.now().toString(36), date: bkSel.date, time: bkSel.time, type: bkSel.type, note: '', status: 'requested', coach: coach.email, by: 'member' });
+      pushNotif(user, '📅', `Booking requested: ${bkSel.type} with ${coach.name} on ${bkSel.date} ${fmtClock(bkSel.time)}.`);
+      bkSel.time = null;
+      saveCurrentUser(user);
+      renderBooking(user);
+      renderCoachSection(user);
+      renderNotifs(user);
+    });
+  }
+  const mine = document.getElementById('pc-sessions');
+  if (mine) mine.addEventListener('click', event => {
+    const cancel = event.target.closest('[data-bk-cancel]');
+    if (!cancel) return;
+    const user = currentUser();
+    if (!user) return;
+    const s = (user.sessions || []).find(x => x.id === cancel.dataset.bkCancel);
+    if (s && (s.status === 'scheduled' || s.status === 'requested')) {
+      s.status = 'cancelled';
+      saveCurrentUser(user);
+      renderCoachSection(user);
+      renderBooking(user);
+      renderNotifs(user);
+    }
+  });
+  const roster = document.getElementById('coach-roster');
+  if (roster) roster.addEventListener('click', event => {
+    const coach = currentUser();
+    if (!coach) return;
+    const day = event.target.closest('[data-avail-day]');
+    if (day) { availDay = parseInt(day.dataset.availDay, 10); renderAvail(coach); return; }
+    const slot = event.target.closest('[data-avail-time]');
+    if (slot) {
+      coach.availability = coachAvail(coach);
+      const key = String(availDay);
+      coach.availability[key] = coach.availability[key] || [];
+      const t = slot.dataset.availTime;
+      coach.availability[key] = coach.availability[key].includes(t)
+        ? coach.availability[key].filter(x => x !== t)
+        : [...coach.availability[key], t].sort();
+      saveCurrentUser(coach);
+      renderAvail(coach);
+    }
+  });
+})();
+
+/* ===========================================================================
+   ADMIN DASHBOARD (#11) + CRM LEADS (#12) + REMINDER QUEUES (#13 frontend).
+   Same-browser demo: operates on accounts + leads stored on this device.
+   Auto-SMS/email/push and real payment capture need the backend.
+   =========================================================================== */
+ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
+const isAdmin = user => !!user && Array.isArray(ONYX.ADMIN_EMAILS) &&
+  ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isManager(user) ? 'manager' : isCoach(user) ? 'coach' : 'member';
+const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
+const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
+const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
+const LEADS_KEY = 'onyx-leads';
+const normLead = l => ({
+  id: l.id || ('l' + Math.random().toString(36).slice(2, 9)),
+  name: l.name || 'Unknown', phone: l.phone || '',
+  source: /^\//.test(l.source || '') ? 'Website' : (l.source || 'Website'),
+  plan: l.plan || 'General',
+  status: ['lead', 'contacted', 'trial', 'joined'].includes(l.status) ? l.status : 'lead',
+  followUp: l.followUp || '', notes: l.notes || '', at: l.at || new Date().toISOString()
+});
+const readLeads = () => {
+  try { return (JSON.parse(localStorage.getItem(LEADS_KEY) || '[]') || []).map(normLead); }
+  catch (err) { return []; }
+};
+const writeLeads = l => localStorage.setItem(LEADS_KEY, JSON.stringify(l));
+const memberActive = m => !!m.plan && (!m.expiresAt || String(m.expiresAt).slice(0, 10) >= dayKey());
+const daysLeft = m => {
+  if (!m.plan || !m.expiresAt) return null;
+  return Math.ceil((new Date(m.expiresAt) - Date.now()) / 86400000);
+};
+const waNum = phone => String(phone || '').replace(/\D/g, '').slice(-10);
+const waLink = (phone, text) => {
+  const n = waNum(phone);
+  return n.length === 10 ? `https://wa.me/91${n}?text=${encodeURIComponent(text)}` : null;
+};
+let adminTab = 'members';
+let adminMember = null;
+
+const renderAdmin = () => {
+  if (!document.body.classList.contains('admin-page')) return;
+  const gate = document.getElementById('admin-gate');
+  const dash = document.getElementById('admin-dash');
+  const main = document.getElementById('admin-main');
+  const user = currentUser();
+  if (!user || (!isAdmin(user) && !isManager(user))) {
+    gate.hidden = false; dash.hidden = true; main.hidden = true;
+    const box = document.getElementById('admin-gate-body');
+    if (!user) {
+      box.innerHTML = '<p class="about-hero-desc">Log in with your owner account to open the control center.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
+      document.getElementById('admin-login').addEventListener('click', () => openAuth('Log in with your admin account.'));
+    } else {
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — not an admin yet. Add it to <strong>ADMIN_EMAILS</strong> in site config.</p>`;
+    }
+    return;
+  }
+  gate.hidden = true; dash.hidden = false; main.hidden = false;
+  document.getElementById('admin-title').innerHTML = `Namaste,<br /><em>${esc(user.name.split(' ')[0])}.</em>`;
+  document.getElementById('admin-sub').textContent = `${user.email} · ${dayKey()}`;
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const today = dayKey();
+  const active = members.filter(memberActive);
+  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+  const pending = members.filter(m => m.pendingPayment).reduce((a, m) => a + (PLAN_PRICES[(m.pendingPayment || {}).plan] || 0), 0);
+  const new30 = members.filter(m => m.createdAt && (Date.now() - new Date(m.createdAt)) / 86400000 <= 30).length;
+  const expiring = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; }).length;
+  const todayAtt = members.reduce((a, m) => a + (m.visits || []).filter(v => String(v.at || '').slice(0, 10) === today).length, 0);
+  document.getElementById('admin-stats').innerHTML = [
+    [inr(revenue), 'REVENUE · ACTIVE PLANS'], [inr(pending), 'PENDING PAYMENTS'],
+    [active.length, 'ACTIVE MEMBERS'], [new30, 'NEW · 30 DAYS'],
+    [expiring, 'EXPIRING ≤ 7 DAYS'], [todayAtt, "TODAY'S CHECK-INS"]
+  ].map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.querySelectorAll('#adm-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.atab === adminTab));
+  const mgr = !isAdmin(user);
+  document.querySelector('[data-atab="leads"]').style.display = mgr ? 'none' : '';
+  document.querySelector('[data-atab="staff"]').style.display = mgr ? 'none' : '';
+  document.querySelector('[data-atab="site"]').style.display = mgr ? 'none' : '';
+  if (mgr && (adminTab === 'leads' || adminTab === 'staff' || adminTab === 'site')) adminTab = 'members';
+  document.getElementById('adm-members').hidden = adminTab !== 'members';
+  document.getElementById('adm-leads').hidden = adminTab !== 'leads';
+  document.getElementById('adm-reminders').hidden = adminTab !== 'reminders';
+  document.getElementById('adm-inv').hidden = adminTab !== 'inv';
+  document.getElementById('adm-staff').hidden = adminTab !== 'staff';
+  document.getElementById('adm-reports').hidden = adminTab !== 'reports';
+  document.getElementById('adm-site').hidden = adminTab !== 'site';
+  if (adminTab === 'members') renderAdminMembers();
+  if (adminTab === 'leads') renderAdminLeads();
+  if (adminTab === 'reminders') renderAdminReminders();
+  if (adminTab === 'inv') renderAdminInv();
+  if (adminTab === 'staff') renderAdminStaff();
+  if (adminTab === 'reports') renderAdminReports();
+  if (adminTab === 'site') renderAdminSite();
+};
+const refreshAdmin = () => renderAdmin();
+
+const renderAdminMembers = () => {
+  const q = (document.getElementById('mm-search').value || '').toLowerCase();
+  const pf = document.getElementById('mm-plan').value;
+  let members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  if (q) members = members.filter(m => `${m.name} ${m.email} ${m.phone || ''}`.toLowerCase().includes(q));
+  if (pf === 'none') members = members.filter(m => !m.plan);
+  else if (pf === 'exp') members = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; });
+  else if (pf) members = members.filter(m => m.plan === pf);
+  document.getElementById('mm-list').innerHTML = members.length ? members.map(m => {
+    const d = daysLeft(m);
+    const st = m.suspended ? '⛔ SUSPENDED' : memberActive(m) ? `ACTIVE${d !== null ? ` · ${d}D LEFT` : ''}` : m.plan ? 'EXPIRED' : (m.pendingPayment ? 'PENDING PAYMENT' : 'NO PLAN');
+    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)}</span></button>`;
+  }).join('') : '<p class="log-empty">No members match.</p>';
+  renderMemberPanel();
+};
+
+const renderMemberPanel = () => {
+  const box = document.getElementById('mm-panel');
+  const m = adminMember ? getMember(adminMember) : null;
+  if (!m) { box.innerHTML = adminMember ? '' : '<p class="log-empty">Select a member to manage.</p>'; return; }
+  const users = readUsers();
+  const coachName = m.assignedCoach && users[m.assignedCoach] ? users[m.assignedCoach].name : '—';
+  const visits = m.visits || [];
+  const last = visits.length ? fmtDate(visits[visits.length - 1].at) : 'Never';
+  const pend = m.pendingPayment;
+  box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''}</h3>` +
+    `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · LV ${levelOf(pointsOf(m)).n} · ${visits.length} VISITS · STREAK ${calcStreak(m.checkins)} · LAST ${esc(String(last)).toUpperCase()}</p>` +
+    `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())}</p>` +
+    (pend ? `<p class="csub">⏳ PENDING: ${esc(pend.plan)} · REF ${esc(pend.ref)} · ${inr(PLAN_PRICES[pend.plan] || 0)} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
+    `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
+    `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
+    `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
+    `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
+    (waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`)}">WhatsApp</a>` : '') + `</div></div>`;
+};
+
+const renderAdminLeads = () => {
+  const leads = readLeads();
+  const n = s => leads.filter(l => l.status === s).length;
+  const conv = leads.length ? ((n('joined') / leads.length) * 100).toFixed(1) : '0.0';
+  document.getElementById('ld-stats').innerHTML =
+    [[leads.length, 'TOTAL'], [n('lead'), 'NEW'], [n('contacted'), 'CONTACTED'], [n('trial'), 'TRIAL'], [n('joined'), 'JOINED'], [`${conv}%`, 'CONVERSION']]
+      .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.getElementById('ld-list').innerHTML = leads.length ? [...leads].reverse().map(l =>
+    `<div class="adm-row"><strong>${esc(l.name)} · ${esc(l.phone || 'no phone')}</strong>` +
+    `<span>${esc(l.source)} · wants ${esc(l.plan)} · ${esc(fmtDate(l.at))}</span>` +
+    `<span class="adm-lead-ctl"><select data-lead-status="${l.id}" aria-label="Status">${['lead', 'contacted', 'trial', 'joined'].map(s => `<option value="${s}"${l.status === s ? ' selected' : ''}>${s.toUpperCase()}</option>`).join('')}</select>` +
+    `<input type="date" data-lead-follow="${l.id}" value="${esc(l.followUp || '')}" aria-label="Follow-up date" />` +
+    (waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`)}">WA</a>` : '') +
+    `<button type="button" data-lead-del="${l.id}" aria-label="Delete lead">×</button></span></div>`
+  ).join('') : '<p class="log-empty">No leads yet — contact-form enquiries land here automatically.</p>';
+};
+
+const renderAdminReminders = () => {
+  const box = document.getElementById('rm-list');
+  const today = dayKey();
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const rows = [];
+  const waBtn = (m, text) => {
+    const link = waLink(m.phone, text);
+    return link ? `<a class="wa-link" target="_blank" rel="noopener" href="${link}">Send WA</a>` : '<span class="csub">NO PHONE</span>';
+  };
+  members.forEach(m => {
+    const d = daysLeft(m);
+    if (m.plan && d !== null && d >= 0 && d <= 7) rows.push({ icon: '⚠️', text: `${m.name} — membership expires in ${d}d (${m.plan}).`, act: waBtn(m, `Hi ${m.name}! Your ONYX ${m.plan} plan expires in ${d} day(s). Renew at the front desk to keep your streak alive.`) });
+    if (m.plan && d !== null && d < 0) rows.push({ icon: '⛔', text: `${m.name} — lapsed ${-d}d ago (${m.plan}).`, act: waBtn(m, `Hi ${m.name}! Your ONYX membership lapsed — come back this week and we'll waive the joining hassle.`) });
+    if (m.pendingPayment) rows.push({ icon: '💳', text: `${m.name} — pending ${m.pendingPayment.plan} · ref ${m.pendingPayment.ref}.`, act: `<button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm</button>` });
+    const visits = m.visits || [];
+    if (m.plan && visits.length) {
+      const gap = Math.floor((Date.now() - new Date(visits[visits.length - 1].at)) / 86400000);
+      if (gap >= 5) rows.push({ icon: '👋', text: `${m.name} — gone ${gap} days.`, act: waBtn(m, `Hi ${m.name}! We haven't seen you in ${gap} days — ready for your next workout? Your coach has a session waiting.`) });
+    }
+    if (m.dob) {
+      const md = String(m.dob).slice(5);
+      const thisYear = new Date(`${today.slice(0, 4)}-${md}T12:00:00`);
+      const diff = Math.ceil((thisYear - new Date(`${today}T12:00:00`)) / 86400000);
+      if (diff >= 0 && diff <= 7) rows.push({ icon: '🎂', text: `${m.name} — birthday ${diff === 0 ? 'TODAY' : 'in ' + diff + 'd'} (${m.dob}).`, act: waBtn(m, `Happy Birthday, ${m.name}! 🎂 Show this message for 15% off your next ONYX renewal.`) });
+    }
+  });
+  const todaySess = [];
+  members.forEach(m => (m.sessions || []).forEach(s => {
+    if ((s.status === 'scheduled' || s.status === 'requested') && s.date === today) todaySess.push({ m, s });
+  }));
+  todaySess.sort((a, b) => String(a.s.time).localeCompare(String(b.s.time)));
+  todaySess.forEach(({ m, s }) => rows.push({ icon: '📅', text: `TODAY ${s.time} — ${s.type} · ${m.name}${s.status === 'requested' ? ' (UNCONFIRMED)' : ''}.`, act: waBtn(m, `Hi ${m.name}! Reminder: your ${s.type} is today at ${s.time}. See you at ONYX!`) }));
+  box.innerHTML = rows.length ? rows.map(r => `<div class="adm-row"><strong>${r.icon} ${esc(r.text)}</strong><span class="adm-lead-ctl">${r.act}</span></div>`).join('')
+    : '<p class="log-empty">Nothing on the radar — quiet day. 🎉</p>';
+};
+
+/* ---------- admin events (bound once) ---------- */
+(() => {
+  const logout = document.getElementById('admin-logout');
+  if (logout) logout.addEventListener('click', () => {
+    localStorage.removeItem(SESSION_KEY);
+    adminMember = null;
+    updateAuthLinks();
+    renderAdmin();
+  });
+  const tabs = document.getElementById('adm-tabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-atab]');
+    if (!btn) return;
+    adminTab = btn.dataset.atab;
+    renderAdmin();
+  });
+  document.getElementById('mm-search').addEventListener('input', () => renderAdminMembers());
+  document.getElementById('mm-plan').addEventListener('change', () => renderAdminMembers());
+  document.getElementById('mm-add-toggle').addEventListener('click', () => {
+    const f = document.getElementById('mm-add');
+    f.hidden = !f.hidden;
+  });
+  document.getElementById('mm-add').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    const email = form.elements.email.value.trim().toLowerCase().slice(0, 80);
+    const phone = form.elements.phone.value.replace(/\D/g, '').slice(-10);
+    const plan = form.elements.plan.value || null;
+    const pw = form.elements.password.value;
+    if (name.length < 2 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || pw.length < 6) return;
+    const users = readUsers();
+    if (users[email]) return;
+    const { algo, salt, hash } = await hashPassword(pw);
+    users[email] = {
+      name, email, algo, salt, pass: hash, phone: phone.length === 10 ? phone : '',
+      createdAt: new Date().toISOString(), onboarded: false, profile: null,
+      plan, expiresAt: plan ? new Date(Date.now() + (PLAN_DAYS[plan] || 30) * 86400000).toISOString() : null,
+      pendingPayment: null
+    };
+    writeUsers(users);
+    form.reset();
+    form.hidden = true;
+    adminMember = email;
+    renderAdmin();
+  });
+  document.getElementById('mm-list').addEventListener('click', event => {
+    const row = event.target.closest('[data-mm]');
+    if (!row) return;
+    adminMember = row.dataset.mm;
+    renderAdminMembers();
+  });
+  document.getElementById('admin-main').addEventListener('click', event => {
+    const btn = event.target.closest('[data-act]');
+    if (!btn) return;
+    const m = getMember(btn.dataset.email);
+    if (!m || isAdmin(m)) return;
+    const me = currentUser();
+    if (btn.dataset.act === 'delmember') {
+      if (!isAdmin(currentUser())) return;
+      if (me && me.email === m.email) return;
+      if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
+      const users = readUsers();
+      delete users[m.email];
+      writeUsers(users);
+      if (adminMember === m.email) adminMember = null;
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'suspend') {
+      m.suspended = !m.suspended;
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'renew') {
+      const mo = parseInt(btn.dataset.mo, 10) || 1;
+      const base = m.expiresAt && new Date(m.expiresAt) > new Date() ? new Date(m.expiresAt) : new Date();
+      base.setDate(base.getDate() + mo * 30);
+      m.expiresAt = base.toISOString();
+      pushNotif(m, '✅', `Membership renewed — active till ${fmtDate(m.expiresAt)}.`);
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'setplan') {
+      const sel = document.getElementById('mm-newplan');
+      m.plan = sel ? sel.value || null : m.plan;
+      if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + (PLAN_DAYS[m.plan] || 30) * 86400000).toISOString();
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'setcoach') {
+      const sel = document.getElementById('mm-newcoach');
+      m.assignedCoach = sel && sel.value ? sel.value : null;
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'confirm-pay') {
+      const pend = m.pendingPayment;
+      if (!pend) return;
+      m.plan = pend.plan;
+      m.expiresAt = new Date(Date.now() + (PLAN_DAYS[pend.plan] || 30) * 86400000).toISOString();
+      m.pendingPayment = null;
+      pushNotif(m, '💳', `Payment of ${inr(PLAN_PRICES[pend.plan] || 0)} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
+      saveMember(m);
+      renderAdmin();
+    }
+  });
+  document.getElementById('ld-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    const phone = form.elements.phone.value.trim().slice(0, 13);
+    if (name.length < 2 || phone.length < 10) return;
+    const leads = readLeads();
+    leads.push(normLead({ name, phone, source: form.elements.source.value, plan: form.elements.plan.value }));
+    writeLeads(leads);
+    form.reset();
+    renderAdminLeads();
+  });
+  document.getElementById('ld-list').addEventListener('change', event => {
+    const st = event.target.closest('[data-lead-status]');
+    const fw = event.target.closest('[data-lead-follow]');
+    if (!st && !fw) return;
+    const leads = readLeads();
+    const id = (st || fw).dataset.leadStatus || (st || fw).dataset.leadFollow;
+    const lead = leads.find(l => l.id === id);
+    if (!lead) return;
+    if (st) lead.status = st.value;
+    if (fw) lead.followUp = fw.value;
+    writeLeads(leads);
+    renderAdminLeads();
+  });
+  document.getElementById('ld-list').addEventListener('click', event => {
+    const del = event.target.closest('[data-lead-del]');
+    if (!del) return;
+    writeLeads(readLeads().filter(l => l.id !== del.dataset.leadDel));
+    renderAdminLeads();
+  });
+})();
+
+/* ===========================================================================
+   ADMIN TABS 2 — INVENTORY (#14), STAFF + RBAC (#15), REPORTS (#16).
+   New tabs plug into the existing admin shell + gate.
+   =========================================================================== */
+ONYX.MANAGER_EMAILS = ONYX.MANAGER_EMAILS || [];
+const isManager = user => !!user && Array.isArray(ONYX.MANAGER_EMAILS) &&
+  ONYX.MANAGER_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+
+/* ---------- inventory ---------- */
+const INV_KEY = 'onyx-inventory';
+const readInv = () => {
+  try { return JSON.parse(localStorage.getItem(INV_KEY) || '[]') || []; }
+  catch (err) { return []; }
+};
+const writeInv = v => localStorage.setItem(INV_KEY, JSON.stringify(v));
+const seedInv = () => {
+  if (localStorage.getItem(INV_KEY) !== null) return;
+  writeInv([
+    { id: 'p1', name: 'Whey Protein 1kg', price: 2499, stock: 17, sold: 83, threshold: 10 },
+    { id: 'p2', name: 'Creatine 300g', price: 899, stock: 24, sold: 41, threshold: 8 },
+    { id: 'p3', name: 'ONYX Shaker', price: 349, stock: 40, sold: 112, threshold: 15 },
+    { id: 'p4', name: 'Training Gloves', price: 599, stock: 9, sold: 27, threshold: 10 },
+    { id: 'p5', name: 'ONYX T-Shirt', price: 799, stock: 22, sold: 35, threshold: 10 }
+  ]);
+};
+const renderAdminInv = () => {
+  seedInv();
+  const items = readInv();
+  const units = items.reduce((a, p) => a + (+p.stock || 0), 0);
+  const value = items.reduce((a, p) => a + (+p.stock || 0) * (+p.price || 0), 0);
+  const low = items.filter(p => (+p.stock || 0) <= (+p.threshold || 0)).length;
+  document.getElementById('iv-stats').innerHTML =
+    [[items.length, 'SKUS'], [units, 'UNITS IN STOCK'], [inr(value), 'STOCK VALUE'], [low, 'LOW STOCK']]
+      .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.getElementById('iv-list').innerHTML = items.length ? items.map(p => {
+    const isLow = (+p.stock || 0) <= (+p.threshold || 0);
+    return `<div class="adm-row${isLow ? ' is-low' : ''}"><strong>${isLow ? '⚠️ ' : ''}${esc(p.name)} · ${inr(p.price)}</strong>` +
+      `<span>STOCK: ${+p.stock || 0} · SOLD: ${+p.sold || 0} · LOW AT: ${+p.threshold || 0}</span>` +
+      `<span class="adm-lead-ctl"><button type="button" data-iv-sell="${p.id}">Sell 1</button><button type="button" data-iv-add="${p.id}">+10 stock</button><button type="button" data-iv-del="${p.id}" aria-label="Delete product">×</button></span></div>`;
+  }).join('') : '<p class="log-empty">No products — add your first above.</p>';
+};
+
+/* ---------- staff + roles ---------- */
+const STAFF_KEY = 'onyx-staff';
+const readStaff = () => {
+  try { return JSON.parse(localStorage.getItem(STAFF_KEY) || '[]') || []; }
+  catch (err) { return []; }
+};
+const writeStaff = v => localStorage.setItem(STAFF_KEY, JSON.stringify(v));
+const trainerLoad = () => {
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  return coachList().map(c => {
+    const clients = members.filter(m => m.assignedCoach === c.email);
+    let sched = 0, done = 0;
+    members.forEach(m => (m.sessions || []).forEach(s => {
+      if (s.coach !== c.email) return;
+      if (s.status === 'done') done++;
+      else if (s.status === 'scheduled' || s.status === 'requested') sched++;
+    }));
+    const value = clients.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+    return { name: c.name, email: c.email, clients: clients.length, sched, done, value };
+  });
+};
+const renderAdminStaff = () => {
+  const staff = readStaff();
+  const load = trainerLoad();
+  document.getElementById('st-list').innerHTML =
+    `<div class="perm-table"><strong>ROLE PERMISSIONS</strong><table>` +
+    `<tr><th>ROLE</th><th>ACCESS</th></tr>` +
+    `<tr><td>Owner</td><td>Everything — all tabs, delete, billing</td></tr>` +
+    `<tr><td>Manager</td><td>Members, reminders, inventory, reports (no delete, no staff)</td></tr>` +
+    `<tr><td>Trainer</td><td>Own clients, programs, diet, sessions (trainer dashboard)</td></tr>` +
+    `<tr><td>Receptionist</td><td>Front-desk check-in via staff PIN (no login needed)</td></tr></table></div>` +
+    (load.length ? `<div class="perm-table"><strong>TRAINER LOAD (LIVE)</strong><table><tr><th>COACH</th><th>CLIENTS</th><th>SESSIONS</th><th>CLIENT VALUE</th></tr>` +
+      load.map(t => `<tr><td>${esc(t.name)}</td><td>${t.clients}</td><td>${t.done} done · ${t.sched} upcoming</td><td>${inr(t.value)}</td></tr>`).join('') + `</table></div>` : '') +
+    (staff.length ? staff.map(s => {
+      const today = (s.days || []).includes(dayKey());
+      return `<div class="adm-row"><strong>${esc(s.name)} · ${esc((s.role || '').toUpperCase())}${today ? ' · ✅ PRESENT' : ''}</strong>` +
+        `<span>${esc(s.phone || 'no phone')} · ${inr(s.salary || 0)}/MO · ${esc(s.hours || 'hours?')} · ${(s.days || []).length} DAYS PRESENT</span>` +
+        `<span class="adm-lead-ctl"><button type="button" data-st-day="${s.id}">${today ? 'Unmark today' : 'Mark present'}</button><button type="button" data-st-del="${s.id}" aria-label="Remove staff">×</button></span></div>`;
+    }).join('') : '<p class="log-empty">No staff records — add trainers, receptionists, managers above.</p>');
+};
+
+/* ---------- reports ---------- */
+const rpBars = pairs => {
+  const max = Math.max(1, ...pairs.map(([, v]) => v));
+  return `<div class="rp-bars">` + pairs.map(([label, v, disp]) =>
+    `<div><span>${esc(label)}</span><span class="ch-bar"><i style="width:${Math.round((v / max) * 100)}%"></i></span><b>${esc(disp !== undefined ? disp : String(v))}</b></div>`
+  ).join('') + `</div>`;
+};
+const renderAdminReports = () => {
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const active = members.filter(memberActive);
+  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+  const planCounts = {};
+  active.forEach(m => { planCounts[m.plan] = (planCounts[m.plan] || 0) + 1; });
+  const popular = Object.entries(planCounts).sort((a, b) => b[1] - a[1])[0];
+  const withBoth = members.filter(m => m.createdAt && m.expiresAt);
+  const avgDur = withBoth.length ? Math.round(withBoth.reduce((a, m) => a + (new Date(m.expiresAt) - new Date(m.createdAt)) / 86400000, 0) / withBoth.length) : 0;
+  const expired = members.filter(m => m.plan && !memberActive(m)).length;
+  const churn = (active.length + expired) ? Math.round((expired / (active.length + expired)) * 100) : 0;
+  document.getElementById('rp-revenue').innerHTML = `<strong>REVENUE & MEMBERSHIP</strong>` +
+    `<p class="csub">ACTIVE REVENUE ${inr(revenue)} · AVG MEMBERSHIP ${avgDur} DAYS · CHURN ${churn}% · MOST POPULAR: ${popular ? esc(popular[0]) + ` (${popular[1]})` : '—'}</p>` +
+    rpBars(Object.entries(planCounts).map(([plan, n]) => [plan, n * (PLAN_PRICES[plan] || 0), `${n} × ${inr(PLAN_PRICES[plan] || 0)}`])) +
+    `<p class="csub">FULL DAILY/WEEKLY/MONTHLY HISTORY NEEDS BACKEND BILLING — THIS IS LIVE PLAN VALUE.</p>`;
+  const hours = Array(24).fill(0);
+  const wdays = Array(7).fill(0);
+  let total = 0, month = 0;
+  const mk = dayKey().slice(0, 7);
+  members.forEach(m => (m.visits || []).forEach(v => {
+    const d = new Date(v.at);
+    if (Number.isNaN(d)) return;
+    total++;
+    if (String(v.at).slice(0, 7) === mk) month++;
+    hours[d.getHours()]++;
+    wdays[d.getDay()]++;
+  }));
+  const wdNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  document.getElementById('rp-attendance').innerHTML = `<strong>ATTENDANCE</strong>` +
+    `<p class="csub">${total} TOTAL VISITS · ${month} THIS MONTH</p>` +
+    `<p class="csub">PEAK HOURS</p>` + rpBars(hours.map((v, h) => [`${h}:00`, v]).filter(([, v], h) => v > 0 || (h >= 5 && h <= 22)).filter((_, i, a) => a.length <= 24)) +
+    `<p class="csub">ACTIVE DAYS</p>` + rpBars(wdays.map((v, i) => [wdNames[i], v]));
+  const load = trainerLoad();
+  document.getElementById('rp-trainers').innerHTML = `<strong>TRAINERS</strong>` + (load.length
+    ? rpBars(load.map(t => [t.name, t.clients, `${t.clients} clients · ${t.done + t.sched} sessions`]))
+    : '<p class="log-empty">No coaches on this device yet.</p>');
+};
+
+/* ---------- tab-2 events (bound once) ---------- */
+(() => {
+  const main = document.getElementById('admin-main');
+  if (!main) return;
+  document.getElementById('iv-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 60);
+    const price = parseFloat(form.elements.price.value);
+    const stock = parseInt(form.elements.stock.value, 10);
+    const threshold = parseInt(form.elements.threshold.value, 10);
+    if (!name || !(price >= 0) || !(stock >= 0)) return;
+    const items = readInv();
+    items.push({ id: 'p' + Date.now().toString(36), name, price, stock, sold: 0, threshold: threshold >= 0 ? threshold : 5 });
+    writeInv(items);
+    form.reset();
+    renderAdminInv();
+  });
+  document.getElementById('iv-list').addEventListener('click', event => {
+    const sell = event.target.closest('[data-iv-sell]');
+    const add = event.target.closest('[data-iv-add]');
+    const del = event.target.closest('[data-iv-del]');
+    if (!sell && !add && !del) return;
+    const items = readInv();
+    const id = (sell || add || del).dataset.ivSell || (sell || add || del).dataset.ivAdd || (sell || add || del).dataset.ivDel;
+    const p = items.find(x => x.id === id);
+    if (del) { writeInv(items.filter(x => x.id !== id)); renderAdminInv(); return; }
+    if (!p) return;
+    if (sell && (+p.stock || 0) > 0) { p.stock--; p.sold = (+p.sold || 0) + 1; }
+    if (add) p.stock = (+p.stock || 0) + 10;
+    writeInv(items);
+    renderAdminInv();
+  });
+  document.getElementById('st-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    if (name.length < 2) return;
+    const staff = readStaff();
+    staff.push({
+      id: 's' + Date.now().toString(36), name, role: form.elements.role.value,
+      phone: form.elements.phone.value.trim().slice(0, 13),
+      salary: parseFloat(form.elements.salary.value) || 0,
+      hours: form.elements.hours.value.trim().slice(0, 30) || '9–5', days: []
+    });
+    writeStaff(staff);
+    form.reset();
+    renderAdminStaff();
+  });
+  document.getElementById('st-list').addEventListener('click', event => {
+    const day = event.target.closest('[data-st-day]');
+    const del = event.target.closest('[data-st-del]');
+    if (!day && !del) return;
+    const staff = readStaff();
+    const id = (day || del).dataset.stDay || (day || del).dataset.stDel;
+    if (del) { writeStaff(staff.filter(x => x.id !== id)); renderAdminStaff(); return; }
+    const s = staff.find(x => x.id === id);
+    if (!s) return;
+    s.days = s.days || [];
+    const k = dayKey();
+    s.days = s.days.includes(k) ? s.days.filter(d => d !== k) : [...s.days, k];
+    writeStaff(staff);
+    renderAdminStaff();
+  });
+})();
+
+/* ===========================================================================
+   MINI CMS (#17) — owner-editable prices, offer, announcement, FAQs, contact.
+   Overrides live in localStorage on this browser; defaults stay in the HTML.
+   Multi-device publishing + media uploads need the backend.
+   =========================================================================== */
+const SITE_KEY = 'onyx-site-content';
+const readSite = () => {
+  try { return JSON.parse(localStorage.getItem(SITE_KEY) || '{}') || {}; }
+  catch (err) { return {}; }
+};
+const writeSite = v => localStorage.setItem(SITE_KEY, JSON.stringify(v));
+const SITE_DEFAULT_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
+const SITE_PLAN_MONTHS = { 'Monthly': 1, '3 months': 3, '6 months': 6, '12 months': 12 };
+
+const applySiteContent = () => {
+  const site = readSite();
+  /* prices → live lookups (revenue, pending amounts) + every plan card */
+  const prices = site.prices || {};
+  Object.keys(SITE_DEFAULT_PRICES).forEach(plan => {
+    const val = parseFloat(prices[plan]);
+    if (val > 0) PLAN_PRICES[plan] = Math.round(val);
+  });
+  document.querySelectorAll('.plan-card[data-plan]').forEach(card => {
+    const plan = card.dataset.plan;
+    const val = parseFloat(prices[plan]);
+    if (!(val > 0)) return;
+    const strong = card.querySelector('.plan-price strong');
+    if (strong) strong.textContent = inr(val);
+    card.dataset.price = inr(val);
+    const perMo = card.querySelectorAll('ul li')[2];
+    const mo = SITE_PLAN_MONTHS[plan] || 1;
+    if (perMo) perMo.textContent = `≈ ${inr(Math.round(val / mo))} / month`;
+  });
+  /* offer banner above the membership plans */
+  const mem = document.getElementById('membership');
+  if (mem && site.offer && site.offer.active && site.offer.title) {
+    let banner = document.getElementById('cms-offer');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'cms-offer';
+      banner.className = 'cms-offer';
+      mem.prepend(banner);
+    }
+    banner.innerHTML = `<strong>${esc(site.offer.title)}</strong>${site.offer.text ? `<span>${esc(site.offer.text)}</span>` : ''}`;
+  }
+  /* site-wide announcement bar */
+  if (site.announcement && site.announcement.active && site.announcement.text && !sessionStorage.getItem('onyx-ann-x')) {
+    if (!document.getElementById('cms-announce')) {
+      const bar = document.createElement('div');
+      bar.id = 'cms-announce';
+      bar.className = 'cms-announce';
+      bar.innerHTML = `<span>${esc(site.announcement.text)}</span><button type="button" id="cms-announce-x" aria-label="Dismiss">×</button>`;
+      document.body.prepend(bar);
+      document.getElementById('cms-announce-x').addEventListener('click', () => {
+        sessionStorage.setItem('onyx-ann-x', '1');
+        bar.remove();
+      });
+    }
+  }
+  /* FAQ overrides (plain text — links need the HTML file) */
+  if (Array.isArray(site.faqs) && site.faqs.length) {
+    const list = document.querySelector('#faq .faq-list');
+    if (list) list.innerHTML = site.faqs.map(f =>
+      `<details><summary>${esc(f.q)}<span aria-hidden="true"></span></summary><p>${esc(f.a)}</p></details>`).join('');
+  }
+  /* contact overrides */
+  const contact = site.contact || {};
+  if (contact.hours) document.querySelectorAll('.visit-grid > div').forEach(div => {
+    const label = div.querySelector('span');
+    if (label && label.textContent.trim() === 'HOURS') {
+      const p = div.querySelector('p');
+      if (p) p.textContent = contact.hours;
+    }
+  });
+  if (contact.phone) {
+    const digits = String(contact.phone).replace(/\D/g, '');
+    if (digits.length >= 10) {
+      ONYX.WHATSAPP = digits;
+      ONYX.PHONE = '+' + digits;
+      document.querySelectorAll('.visit-grid > div').forEach(div => {
+        const label = div.querySelector('span');
+        if (label && label.textContent.trim() === 'CALL US') {
+          const a = div.querySelector('a[href^="tel:"]');
+          if (a) { a.href = 'tel:+' + digits; a.textContent = '+' + digits.slice(0, 2) + ' ' + digits.slice(2); }
+        }
+      });
+    }
+  }
+  if (contact.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) {
+    document.querySelectorAll('a[href^="mailto:"]').forEach(a => {
+      a.href = 'mailto:' + contact.email;
+      if (a.textContent.includes('@')) a.textContent = contact.email;
+    });
+  }
+  if (contact.address) document.querySelectorAll('.visit-grid > div').forEach(div => {
+    const label = div.querySelector('span');
+    const p = div.querySelector('p');
+    if (label && label.textContent.trim() === 'ADDRESS' && p && p.firstChild) {
+      p.firstChild.textContent = contact.address + ', ';
+    }
+  });
+};
+
+const renderAdminSite = () => {
+  const site = readSite();
+  const form = document.getElementById('site-form');
+  if (!form) return;
+  const prices = site.prices || {};
+  form.elements.pMonthly.value = prices['Monthly'] || '';
+  form.elements.p3.value = prices['3 months'] || '';
+  form.elements.p6.value = prices['6 months'] || '';
+  form.elements.p12.value = prices['12 months'] || '';
+  form.elements.offerTitle.value = (site.offer || {}).title || '';
+  form.elements.offerText.value = (site.offer || {}).text || '';
+  form.elements.offerOn.checked = !!(site.offer || {}).active;
+  form.elements.annText.value = (site.announcement || {}).text || '';
+  form.elements.annOn.checked = !!(site.announcement || {}).active;
+  form.elements.faqs.value = Array.isArray(site.faqs) ? site.faqs.map(f => `${f.q}\n${f.a}`).join('\n\n') : '';
+  form.elements.phone.value = (site.contact || {}).phone || '';
+  form.elements.email.value = (site.contact || {}).email || '';
+  form.elements.hours.value = (site.contact || {}).hours || '';
+  form.elements.address.value = (site.contact || {}).address || '';
+  const note = document.getElementById('site-saved');
+  if (note) note.textContent = '';
+};
+
+(() => {
+  const form = document.getElementById('site-form');
+  if (!form) return;
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const num = v => { const n = parseFloat(v); return n > 0 ? Math.round(n) : undefined; };
+    const prices = {};
+    [['Monthly', form.elements.pMonthly.value], ['3 months', form.elements.p3.value],
+     ['6 months', form.elements.p6.value], ['12 months', form.elements.p12.value]].forEach(([plan, v]) => {
+      const n = num(v);
+      if (n) prices[plan] = n;
+    });
+    const faqs = String(form.elements.faqs.value || '').split(/\n\s*\n/).map(block => {
+      const lines = block.split('\n').map(s => s.trim()).filter(Boolean);
+      return lines.length >= 2 ? { q: lines[0].slice(0, 140), a: lines.slice(1).join(' ').slice(0, 600) } : null;
+    }).filter(Boolean);
+    writeSite({
+      prices,
+      offer: { title: form.elements.offerTitle.value.trim().slice(0, 80), text: form.elements.offerText.value.trim().slice(0, 200), active: form.elements.offerOn.checked },
+      announcement: { text: form.elements.annText.value.trim().slice(0, 160), active: form.elements.annOn.checked },
+      faqs,
+      contact: {
+        phone: form.elements.phone.value.trim().slice(0, 18),
+        email: form.elements.email.value.trim().slice(0, 80),
+        hours: form.elements.hours.value.trim().slice(0, 80),
+        address: form.elements.address.value.trim().slice(0, 120)
+      }
+    });
+    sessionStorage.removeItem('onyx-ann-x');
+    applySiteContent();
+    const note = document.getElementById('site-saved');
+    if (note) note.textContent = 'Saved — live on this browser immediately.';
+  });
+  document.getElementById('site-reset').addEventListener('click', () => {
+    if (!window.confirm('Reset all site content to defaults?')) return;
+    localStorage.removeItem(SITE_KEY);
+    sessionStorage.removeItem('onyx-ann-x');
+    renderAdminSite();
+    const note = document.getElementById('site-saved');
+    if (note) note.textContent = 'Reset — reload the page to see defaults.';
+  });
+})();
+
+// First paint — runs after every module above is defined.
+applySiteContent();
+updateAuthLinks();
+renderProfile();
+renderCoach();
+renderAdmin();

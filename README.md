@@ -15,7 +15,10 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 | `index.html` | Home — hero, pillars, coaches, timetable, memory wall, FAQ, plans, visit |
 | `about.html` | Philosophy, values, coaches, milestones |
 | `privacy.html` | Privacy policy, membership terms, refund policy |
-| `profile.html` | Member area — assessment results, training week, diet plan |
+| `weight-loss.html` … `membership.html` | 5 SEO landing pages — unique titles/descs, Service + FAQPage schema, lead-capture dialog, in sitemap |
+| `admin.html` | Admin control center — gated by `ADMIN_EMAILS`; revenue/members overview, member management (add/renew/plan/trainer/suspend/delete), lead CRM with pipeline + conversion, reminder queues with WhatsApp actions, inventory, staff + roles, reports, mini-CMS (same-browser demo) |
+| `trainers.html` | Trainer dashboard — gated by `COACH_EMAILS`; client files, program assign/modify/build, diet plans + client intake review, sessions + availability, goals, measurements, PRs, notes, messages, attendance + photo review (same-browser demo) |
+| `profile.html` | Member dashboard — membership, today overview, training, diet plans + calorie tracker + food database, programs, progress photos, attendance, coach corner, AI assistant, personal goals, challenges & leaderboards, notification center, PT booking |
 | `404.html` | Not-found page |
 
 Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`,
@@ -67,16 +70,44 @@ Also configure the Razorpay Payment Links to redirect back to the site so the
 `razorpay_payment_link_status` parameters are picked up automatically — the
 script already reads them on load and re-checks with your endpoint.
 
-The four live payment links are in `PAYMENT_LINKS` in `script.js`.
+The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `script.js`.
 
 ## Notes
 
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Cache busting.** Stylesheet and script are linked as `?v=23`. Bump that
+- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
+- **Cache busting.** Stylesheet and script are linked as `?v=40`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
 - `profile.html` is `noindex` and disallowed in `robots.txt`; it is a private
   member area.
+
+## Security (#19)
+
+In place on the frontend:
+
+- **Passwords.** PBKDF2-SHA256, 210k iterations, unique 16-byte salt per
+  user; legacy SHA-256 hashes upgrade silently on next login. Minimum 6
+  characters, enforced on signup and admin-created accounts.
+- **Rate limiting.** Login: 5 wrong attempts → 60s lockout (per browser).
+  Reception PIN: 5 wrong attempts → 60s lockout (per tab session).
+- **Sessions.** Member session is an email pointer in `sessionStorage`
+  (tab-scoped); staff unlock is a separate tab-scoped flag. No tokens or
+  secrets are stored anywhere or committed to the repo.
+- **XSS hygiene.** All user/member/lead content is rendered through `esc()`;
+  photo uploads are resized client-side and capped at ~30 per member.
+- **Transport.** Every `target="_blank"` link ships `rel="noopener"`.
+- **Gating.** `admin.html` requires an `ADMIN_EMAILS` (or limited
+  `MANAGER_EMAILS`) login and is `noindex` + disallowed in `robots.txt`,
+  alongside `profile.html` and `trainers.html`.
+- **Terms.** Membership terms, refunds, health and conduct live in
+  `privacy.html`, linked from every footer as “Privacy & Terms”.
+
+Honest backend-must list (client-side measures above are not enough alone):
+
+- Real auth (server sessions/JWT, httpOnly cookies), server-side rate
+  limits, hashed PIN + member-code verification, payment capture via the
+  gateway, and server-pushed reminders/OTP before production launch.
