@@ -954,11 +954,7 @@ const renderProfile = () => {
     }
     if (user.plan && user.customDiet && user.customDiet.meals) {
       diet.hidden = false;
-      document.getElementById('pf-calories').textContent = user.customDiet.calories || '—';
-      document.getElementById('pf-protein').textContent = `${user.customDiet.protein || '—'}g`;
-      document.getElementById('pf-meals').innerHTML = user.customDiet.meals.map(([title, text]) =>
-        `<div class="pf-meal"><h4>${esc(title)}</h4><p>${esc(text)}</p></div>`
-      ).join('');
+      renderDietSection(user);
     }
     renderDashboard(user);
     return;
@@ -982,14 +978,7 @@ const renderProfile = () => {
     `<div class="pf-day"><div class="pf-day-head"><h4>${esc(day.label)}</h4><span>${esc(day.focus).toUpperCase()}</span></div><ul>${day.items.map(item => `<li>${esc(item)}</li>`).join('')}</ul></div>`
   ).join('');
 
-  const dietMeals = user.customDiet && user.customDiet.meals ? user.customDiet.meals : p.meals;
-  const dietNote = document.getElementById('pf-diet-note');
-  document.getElementById('pf-calories').textContent = (user.customDiet && user.customDiet.calories) || p.calories;
-  document.getElementById('pf-protein').textContent = `${(user.customDiet && user.customDiet.protein) || p.protein}g`;
-  document.getElementById('pf-meals').innerHTML = dietMeals.map(([title, text]) =>
-    `<div class="pf-meal"><h4>${esc(title)}</h4><p>${esc(text)}</p></div>`
-  ).join('');
-  if (dietNote && user.customDiet) dietNote.textContent = `CUSTOMIZED BY ${String(user.customDiet.by).toUpperCase()} · ${fmtDate(user.customDiet.at).toUpperCase()} — YOUR COACH FINE-TUNED THIS PLAN FOR YOU.`;  const ap = user.activeProgram || {};
+  renderDietSection(user);  const ap = user.activeProgram || {};
   const coachLine = document.getElementById('pf-coach-note');
   if (coachLine) {
     const showCoach = ap.source === 'coach' && ap.coach;
@@ -1103,7 +1092,7 @@ const normalizeDash = user => {
   ensure('goals', []); ensure('customPrograms', []); ensure('workoutDone', {});
   ensure('threads', {}); ensure('coachPrograms', []); ensure('coachNotes', []);
   ensure('prs', []); ensure('measurements', []); ensure('sessions', []);
-  ensure('memberReadAt', {}); ensure('coachReadAt', {});
+  ensure('memberReadAt', {}); ensure('coachReadAt', {}); ensure('foodLog', {});
   if (user.assignedCoach === undefined) { user.assignedCoach = null; changed = true; }
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
   if (!user.visits) {
@@ -2781,8 +2770,7 @@ const renderClientDetail = (coach, m) => {
     (prs.length ? [...prs].reverse().map(r => `<li><span><strong>${esc(r.lift)} — ${esc(String(r.weight))}kg</strong>${esc(fmtDate(r.date))}${r.note ? ` · ${esc(r.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="pr-del" data-id="${r.id}">×</button></span></li>`).join('') : '<li class="log-empty">No PRs logged.</li>') + `</ul>` +
     `<form data-form="pr" class="cform"><input name="lift" maxlength="40" placeholder="Lift — e.g. Deadlift" required /><input name="weight" type="number" step="0.5" min="1" placeholder="kg" required /><input name="note" maxlength="60" placeholder="Note (optional)" /><button type="submit">Log PR</button></form></section>` +
   `<section class="cblock"><span class="today-tag">DIET PLAN</span>` +
-    (diet && diet.meals ? `<p class="csub">CUSTOM · ${diet.calories} KCAL · ${diet.protein}G PROTEIN · BY ${esc(String(diet.by)).toUpperCase()}</p><ul class="clist">` + diet.meals.map(([t, x]) => `<li><span><strong>${esc(t)}</strong>${esc(x)}</span></li>`).join('') + `</ul>`
-      : p && p.meals ? '<p class="log-empty">Assessment template active — no custom plan yet.</p>' : '<p class="log-empty">No diet data.</p>') +
+    clientDietHTML(m) +
     `<div class="crow"><button type="button" data-act="diet">Write diet plan</button></div></section>` +
   `<section class="cblock"><span class="today-tag">COACH NOTES</span><ul class="clist">` +
     (notes.length ? notes.map(n => `<li><span><strong>${esc(fmtDate(n.at))} · ${n.shared ? 'SHARED' : 'PRIVATE'}</strong>${esc(n.text)}</span><span class="cbtns"><button type="button" data-act="note-share" data-id="${n.id}">${n.shared ? 'Unshare' : 'Share'}</button><button type="button" data-act="note-del" data-id="${n.id}">×</button></span></li>`).join('') : '<li class="log-empty">No notes yet.</li>') + `</ul>` +
@@ -2873,11 +2861,22 @@ const openDiet = () => {
   document.getElementById('diet-sub').textContent = `${m.name.toUpperCase()} — PUBLISHING REPLACES THEIR CURRENT DIET PLAN.`;
   document.getElementById('diet-cal').value = (cur && cur.calories) || (p && p.calories) || '';
   document.getElementById('diet-pro').value = (cur && cur.protein) || (p && p.protein) || '';
-  const meals = (cur && cur.meals) || (p && p.meals) || [['Breakfast', ''], ['Lunch', ''], ['Snack', ''], ['Dinner', '']];
-  meals.forEach(([t, x], i) => {
-    const box = document.getElementById(`diet-m${i}`);
-    if (box) box.value = x || '';
+  document.getElementById('diet-carb').value = (cur && cur.carbs) || '';
+  document.getElementById('diet-fat').value = (cur && cur.fat) || '';
+  const meals = (cur && cur.meals) || (p && p.meals) || [];
+  document.querySelectorAll('#diet-dialog .diet-meal').forEach((block, i) => {
+    const meal = normMeal(meals[i] || [MEAL_SLOTS[i] || `Meal ${i + 1}`, ''], i);
+    const box = block.querySelector('textarea');
+    const time = block.querySelector('.diet-time');
+    if (box) box.value = meal.x || '';
+    if (time) time.value = meal.time || defaultMealTime(i);
+    ['kcal', 'p', 'c', 'f'].forEach(k => {
+      const inp = block.querySelector(`[data-mk="${k}"]`);
+      if (inp) inp.value = meal[k] > 0 ? meal[k] : '';
+    });
   });
+  document.getElementById('diet-find').value = '';
+  document.getElementById('diet-find-results').innerHTML = '';
   document.getElementById('diet-error').hidden = true;
   document.getElementById('diet-dialog').showModal();
 };
@@ -3084,23 +3083,352 @@ const openDiet = () => {
       if (!coach || !m) return;
       const errorEl = document.getElementById('diet-error');
       const fail = message => { errorEl.textContent = message; errorEl.hidden = !message; };
-      const titles = ['Breakfast', 'Lunch', 'Snack', 'Dinner'];
-      const meals = titles.map((t, i) => {
-        const box = document.getElementById(`diet-m${i}`);
-        return [t, box ? box.value.trim().slice(0, 300) : ''];
+      const meals = [...document.querySelectorAll('#diet-dialog .diet-meal')].map((block, i) => {
+        const box = block.querySelector('textarea');
+        const time = block.querySelector('.diet-time');
+        const num = k => { const inp = block.querySelector(`[data-mk="${k}"]`); const v = inp ? parseFloat(inp.value) : 0; return v > 0 ? +v.toFixed(1) : 0; };
+        return { t: MEAL_SLOTS[i] || `Meal ${i + 1}`, time: time ? time.value : '', x: box ? box.value.trim().slice(0, 300) : '', kcal: Math.round(num('kcal')), p: num('p'), c: num('c'), f: num('f') };
       });
-      if (meals.some(([, x]) => !x)) return fail('Fill all four meals — even a short line each.');
+      if (meals.some(m => !m.x)) return fail('Fill all four meals \u2014 even a short line each.');
       const calories = parseInt(document.getElementById('diet-cal').value, 10);
       const protein = parseInt(document.getElementById('diet-pro').value, 10);
+      const carbs = parseInt(document.getElementById('diet-carb').value, 10);
+      const fat = parseInt(document.getElementById('diet-fat').value, 10);
       if (!(calories >= 1200 && calories <= 5000)) return fail('Calories must be between 1200 and 5000.');
       if (!(protein >= 20 && protein <= 400)) return fail('Protein must be between 20 and 400 g.');
+      if (!(carbs >= 50 && carbs <= 700)) return fail('Carbs must be between 50 and 700 g.');
+      if (!(fat >= 20 && fat <= 250)) return fail('Fat must be between 20 and 250 g.');
       fail('');
-      m.customDiet = { meals, calories, protein, by: coach.name, at: new Date().toISOString() };
+      m.customDiet = { meals, calories, protein, carbs, fat, by: coach.name, at: new Date().toISOString() };
       saveMember(m);
       dietDialog.close();
       refreshClientDetail();
     });
   }
+})();
+
+/* ===========================================================================
+   NUTRITION SYSTEM — embedded food database, daily tracker, trainer diet plans.
+   FOOD_DB rows: [name, kcal, protein, carbs, fat per 100g, serving label, serving g]
+   Values are standard per-100g reference values (cooked weights where noted).
+   =========================================================================== */
+const FOOD_DB = [
+// Staples & grains
+["Roti / Chapati (whole wheat)",265,9,49,3.7,"1 roti",40],["Cooked white rice",130,2.7,28,0.3,"1 katori",150],
+["Cooked brown rice",123,2.7,25.6,1,"1 katori",150],["Whole wheat bread",247,13,41,3.4,"2 slices",60],
+["White bread",265,9,49,3.2,"2 slices",60],["Oats (dry)",389,16.9,66,6.9,"1 bowl",40],
+["Poha (cooked)",130,2.5,27,0.8,"1 plate",180],["Upma (cooked)",132,3.5,24,2.2,"1 plate",180],
+["Idli",145,4,30,0.5,"2 pc",80],["Plain dosa",170,4.5,32,3,"1 pc",80],
+["Masala dosa",165,4.5,28,4,"1 pc",150],["Paratha (with ghee)",290,7,42,10,"1 pc",60],
+["Naan",310,9,56,5,"1 pc",90],["Quinoa (cooked)",120,4.4,21,1.9,"1 katori",150],
+["Dalia (cooked)",120,4,25,0.6,"1 bowl",180],["Cornflakes",357,7.5,84,0.4,"1 bowl",30],
+["Muesli",380,10,65,12,"1 bowl",40],["Pasta (cooked)",131,5,25,1.1,"1 plate",200],
+["Noodles (cooked)",138,4.5,25,2.1,"1 plate",200],["Besan / Gram flour",387,22,58,6.7,"4 tbsp",30],
+["Suji / Rava",360,10,73,1,"4 tbsp",30],["Bajra flour",361,11.6,67.5,5,"4 tbsp",30],
+["Jowar flour",349,10.4,72.6,1.9,"4 tbsp",30],
+// Protein
+["Chicken breast (cooked)",165,31,0,3.6,"1 palm",150],["Chicken thigh (cooked)",209,26,0,11,"2 pc",120],
+["Chicken curry (homemade)",145,15,4,7,"1 katori",150],["Egg (boiled)",155,13,1.1,11,"1 egg",50],
+["Egg white",52,11,0.7,0.2,"1 white",33],["Paneer",265,18,6,20,"4 cubes",60],
+["Tofu",76,8,1.9,4.8,"1 slab",100],["Rohu fish (cooked)",135,20,0,5,"2 pc",120],
+["Salmon (cooked)",206,22,0,12,"1 fillet",120],["Tuna (canned, in water)",108,25,0,1,"1 can",100],
+["Prawns (cooked)",99,24,0.2,0.3,"1 katori",100],["Mutton (cooked, lean)",250,26,0,16,"4 pc",100],
+["Whey protein",400,80,8,6,"1 scoop",30],["Soya chunks (dry)",345,52,33,0.5,"1 handful",40],
+["Soya milk",54,3.3,6,1.6,"1 glass",200],["Toor dal (cooked)",116,7,19,0.6,"1 katori",150],
+["Moong dal (cooked)",105,7,18,0.4,"1 katori",150],["Masoor dal (cooked)",116,9,20,0.4,"1 katori",150],
+["Chana / Chickpeas (cooked)",164,9,27.4,2.6,"1 katori",150],["Rajma (cooked)",132,8.9,23.7,0.5,"1 katori",150],
+["Chole (curry)",150,8,20,4,"1 katori",150],["Kala chana (cooked)",150,9,25,2,"1 katori",120],
+["Sprouts (moong)",30,3,5.7,0.2,"1 bowl",100],["Peanuts",567,26,16,49,"1 handful",30],
+["Almonds",579,21,22,50,"8-10 pc",15],["Cashews",553,18,30,44,"8 pc",15],
+["Walnuts",654,15,14,65,"4 halves",15],["Peanut butter",588,25,20,50,"1 tbsp",16],
+["Makhana (roasted)",347,9.7,77,0.1,"1 bowl",20],
+// Dairy & fats
+["Toned milk",55,3.2,4.8,3,"1 glass",200],["Full-cream milk",67,3.2,4.8,4,"1 glass",200],
+["Curd (plain)",63,3.5,4.7,3.3,"1 katori",150],["Greek yogurt",97,9,3.6,5,"1 katori",150],
+["Chaas / Buttermilk",30,1.5,3,1,"1 glass",200],["Cheese slice",402,23,1.3,33,"1 slice",20],
+["Ghee",876,0.3,0,99.5,"1 tsp",5],["Butter",717,0.9,0.1,81,"1 tsp",5],
+["Mustard oil",884,0,0,100,"1 tsp",5],
+// Vegetables
+["Potato (boiled)",87,1.9,20,0.1,"1 med",150],["Sweet potato (boiled)",86,1.6,20,0.1,"1 med",150],
+["Onion",40,1.1,9.3,0.1,"1 med",100],["Tomato",18,0.9,3.9,0.2,"1 med",100],
+["Palak / Spinach",23,2.9,3.6,0.4,"1 bunch",100],["Cauliflower",25,1.9,5,0.3,"1 katori",100],
+["Cabbage",25,1.3,5.8,0.1,"1 katori",100],["Broccoli",34,2.8,6.6,0.4,"1 katori",100],
+["Carrot",41,0.9,9.6,0.2,"1 med",60],["Green beans",31,1.8,7,0.2,"1 katori",100],
+["Green peas",81,5.4,14.5,0.4,"1 katori",100],["Bhindi / Okra",33,1.9,7.5,0.2,"1 katori",100],
+["Lauki / Bottle gourd",14,0.6,3.4,0,"1 katori",150],["Baingan",25,1,5.9,0.2,"1 katori",150],
+["Shimla mirch",31,1,6,0.3,"1 med",100],["Mix veg sabzi",70,2.5,9,3,"1 katori",150],
+["Dal tadka",120,7,15,4,"1 katori",150],["Sambar",60,3,9,1.5,"1 katori",150],
+// Fruits
+["Banana",89,1.1,22.8,0.3,"1 med",120],["Apple",52,0.3,13.8,0.2,"1 med",180],
+["Orange",47,0.9,11.8,0.1,"1 med",130],["Mango",60,0.8,15,0.4,"1 cup",150],
+["Papaya",43,0.5,11,0.3,"1 cup",150],["Watermelon",30,0.6,7.6,0.2,"1 wedge",200],
+["Grapes",69,0.7,18,0.2,"15 pc",100],["Pomegranate",83,1.7,18.7,1.2,"1 katori",100],
+["Pineapple",50,0.5,13,0.1,"1 cup",150],["Guava",68,2.6,14,1,"1 med",100],
+["Dates",282,2.5,75,0.4,"2 pc",16],["Raisins",299,3.1,79,0.5,"1 tbsp",20],
+["Coconut water",19,0.7,3.7,0.2,"1 glass",200],
+// Snacks & eating out
+["Samosa",262,6,32,13,"1 pc",100],["Veg pakora",290,7,28,17,"5 pc",100],
+["Dhokla",160,6,28,3,"2 pc",100],["Vada pav",220,5.5,30,9,"1 pc",140],
+["Pav bhaji (with 2 pav)",150,4,20,6,"1 plate",300],["Chole bhature",190,6,28,6,"1 plate",350],
+["Veg biryani",150,4,28,3,"1 plate",250],["Chicken biryani",165,9,22,5,"1 plate",250],
+["Veg fried rice",150,4,27,3,"1 plate",200],["Hakka noodles",140,4,25,3,"1 plate",200],
+["Veg momos (steamed)",150,5,28,2,"5 pc",120],["Spring rolls",200,5,24,10,"2 pc",100],
+["Pizza slice (veg)",240,10,30,9,"1 slice",100],["Veg burger",230,7,30,9,"1 pc",150],
+["French fries",319,3.4,37,17,"1 med",100],["Mixture namkeen",500,12,45,30,"1 handful",30],
+["Popcorn (air-popped)",387,13,78,4.5,"1 bowl",20],["Dark chocolate",598,7.8,46,43,"2 squares",20],
+["Milk chocolate",535,8,59,30,"2 squares",20],["Vanilla ice cream",207,3.5,23.6,11,"1 scoop",60],
+["Gulab jamun",300,5,45,12,"2 pc",60],["Jalebi",380,3,75,8,"2 pc",40],
+["Rasgulla",140,6,25,2,"2 pc",80],["Motichoor ladoo",450,6,60,20,"1 pc",30],
+// Beverages
+["Chai (milk + sugar)",40,1.5,6,1,"1 cup",150],["Filter coffee (milk + sugar)",45,1.8,6.5,1.2,"1 cup",150],
+["Black coffee",2,0.3,0,0,"1 cup",150],["Green tea",1,0,0,0,"1 cup",150],
+["Sweet lassi",110,3.5,16,4,"1 glass",200],["Fresh lime soda (sweet)",45,0,11,0,"1 glass",250],
+["Orange juice",45,0.7,10.4,0.2,"1 glass",200],["Cola",42,0,10.6,0,"1 glass",250],
+["Badam milk",90,3,12,3.5,"1 glass",200],["Cold coffee",80,2.5,13,2,"1 glass",250]
+];
+const MEAL_SLOTS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'];
+const foodByName = name => FOOD_DB.find(f => f[0] === name);
+const searchFoods = q => {
+  const needle = String(q || '').trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const starts = [], hits = [];
+  FOOD_DB.forEach(f => {
+    const name = f[0].toLowerCase();
+    if (name.startsWith(needle)) starts.push(f);
+    else if (name.includes(needle)) hits.push(f);
+  });
+  return [...starts, ...hits].slice(0, 8);
+};
+const scaleFood = (food, grams) => {
+  const k = Math.max(0, grams) / 100;
+  return { kcal: Math.round(food[1] * k), p: +(food[2] * k).toFixed(1), c: +(food[3] * k).toFixed(1), f: +(food[4] * k).toFixed(1) };
+};
+const fmtNum = n => Number(n || 0).toLocaleString('en-US');
+const fmtClock = hhmm => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || '');
+  if (!m) return '';
+  let h = parseInt(m[1], 10);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
+};
+const defaultMealTime = i => ['08:00', '13:00', '17:00', '20:00'][i] || '';
+const mealForHour = (h = new Date().getHours()) => h < 11 ? 'Breakfast' : h < 16 ? 'Lunch' : h < 19 ? 'Snack' : 'Dinner';
+
+/* Diet targets: trainer plan wins, else assessment template, else sensible default. */
+const getDietTargets = user => {
+  const d = user.customDiet;
+  if (d && d.calories) return { kcal: d.calories, p: d.protein || 0, c: d.carbs || 0, f: d.fat || 0 };
+  const p = user.profile;
+  if (p && p.calories) return { kcal: p.calories, p: p.protein || 0, c: Math.round(p.calories * 0.45 / 4), f: Math.round(p.calories * 0.25 / 9) };
+  return { kcal: 2400, p: 150, c: 270, f: 65 };
+};
+/* Normalize legacy [title, text] pairs and new meal objects into one shape. */
+const normMeal = (m, i) => Array.isArray(m)
+  ? { t: m[0] || MEAL_SLOTS[i] || `Meal ${i + 1}`, time: '', x: m[1] || '', kcal: 0, p: 0, c: 0, f: 0 }
+  : { t: (m && m.t) || MEAL_SLOTS[i] || `Meal ${i + 1}`, time: (m && m.time) || '', x: (m && m.x) || '', kcal: +(m && m.kcal) || 0, p: +(m && m.p) || 0, c: +(m && m.c) || 0, f: +(m && m.f) || 0 };
+const dayIntake = user => {
+  const log = ((user.foodLog || {})[dayKey()] || []);
+  return log.reduce((a, e) => ({ kcal: a.kcal + (+e.kcal || 0), p: a.p + (+e.p || 0), c: a.c + (+e.c || 0), f: a.f + (+e.f || 0), count: a.count + 1 }),
+    { kcal: 0, p: 0, c: 0, f: 0, count: 0 });
+};
+
+/* ---------- member diet section: plan + tracker + log ---------- */
+const renderDietSection = user => {
+  const tg = getDietTargets(user);
+  document.getElementById('pf-calories').textContent = fmtNum(tg.kcal);
+  document.getElementById('pf-protein').textContent = `${fmtNum(tg.p)}g`;
+  document.getElementById('pf-carbs').textContent = `${fmtNum(tg.c)}g`;
+  document.getElementById('pf-fat').textContent = `${fmtNum(tg.f)}g`;
+  const raw = (user.customDiet && user.customDiet.meals) || (user.profile && user.profile.meals) || [];
+  document.getElementById('pf-meals').innerHTML = raw.map((m, i) => {
+    const meal = normMeal(m, i);
+    const clock = meal.time ? `<time>${esc(fmtClock(meal.time))}</time>` : '';
+    const macros = meal.kcal > 0 ? `<small>${fmtNum(meal.kcal)} KCAL · P${fmtNum(meal.p)} C${fmtNum(meal.c)} F${fmtNum(meal.f)}</small>` : '';
+    return `<div class="pf-meal"><h4>${esc(meal.t)}${clock}</h4><p>${esc(meal.x).replace(/\n/g, '<br />')}</p>${macros}</div>`;
+  }).join('');
+  const dietNote = document.getElementById('pf-diet-note');
+  if (dietNote) dietNote.textContent = user.customDiet
+    ? `CUSTOMIZED BY ${String(user.customDiet.by).toUpperCase()} · ${fmtDate(user.customDiet.at).toUpperCase()} — YOUR COACH FINE-TUNED THIS PLAN FOR YOU.`
+    : 'Generic template from your assessment — your coach and a nutritionist fine-tune it to you. Not medical advice.';
+  const counter = document.getElementById('food-count');
+  if (counter) counter.textContent = FOOD_DB.length;
+  renderTracker(user);
+};
+
+const renderTracker = user => {
+  const card = document.getElementById('diet-track');
+  const logBox = document.getElementById('food-log');
+  if (!card || !logBox) return;
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const left = tg.kcal - ate.kcal;
+  const bar = (val, goal) => {
+    const pc = goal > 0 ? Math.min(100, Math.round((val / goal) * 100)) : 0;
+    return `<span class="track-bar"><i style="width:${pc}%"></i></span>`;
+  };
+  card.hidden = false;
+  card.innerHTML = `<span class="today-tag">TODAY'S INTAKE</span>` +
+    `<p class="track-big"><strong>${fmtNum(ate.kcal)}</strong> / ${fmtNum(tg.kcal)} kcal</p>${bar(ate.kcal, tg.kcal)}` +
+    `<p class="track-left">${left >= 0 ? `${fmtNum(left)} kcal left today` : `${fmtNum(-left)} kcal over target`}</p>` +
+    `<div class="track-macros">` +
+    [['PROTEIN', ate.p, tg.p], ['CARBS', ate.c, tg.c], ['FAT', ate.f, tg.f]].map(([l, v, g]) =>
+      `<div><span>${l}</span><strong>${fmtNum(Math.round(v))} / ${fmtNum(g)}g</strong>${bar(v, g)}</div>`).join('') + `</div>`;
+  const entries = ((user.foodLog || {})[dayKey()] || []);
+  logBox.innerHTML = entries.length
+    ? MEAL_SLOTS.map(slot => {
+        const items = entries.map((e, i) => ({ ...e, i })).filter(e => e.meal === slot);
+        if (!items.length) return '';
+        const sub = items.reduce((a, e) => a + (+e.kcal || 0), 0);
+        return `<div class="food-slot"><h4>${slot}<em>${fmtNum(sub)} kcal</em></h4><ul>` +
+          items.map(e => `<li><span><strong>${esc(e.name)}</strong>${esc(String(e.grams))}g · ${fmtNum(e.kcal)} kcal · P${e.p} C${e.c} F${e.f}</span><button type="button" data-food-del="${e.i}" aria-label="Remove">×</button></li>`).join('') + `</ul></div>`;
+      }).join('')
+    : '<p class="log-empty">Nothing logged yet — search the food database below and tap a result to add it.</p>';
+};
+
+/* ---------- member food search + log events (bound once) ---------- */
+(() => {
+  const input = document.getElementById('food-search');
+  if (!input) return;
+  const results = document.getElementById('food-results');
+  const pick = document.getElementById('food-pick');
+  const pickName = document.getElementById('food-pick-name');
+  const pickGrams = document.getElementById('food-pick-grams');
+  const pickMeal = document.getElementById('food-pick-meal');
+  const pickMacros = document.getElementById('food-pick-macros');
+  let selected = null;
+  const paintPick = () => {
+    if (!selected) { pick.hidden = true; return; }
+    pick.hidden = false;
+    pickName.textContent = selected[0];
+    const g = Math.max(1, parseInt(pickGrams.value, 10) || selected[6] || 100);
+    const s = scaleFood(selected, g);
+    pickMacros.textContent = `${fmtNum(g)}g = ${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f} (per 100g: ${selected[1]} kcal · P${selected[2]} C${selected[3]} F${selected[4]})`;
+  };
+  input.addEventListener('input', () => {
+    const hits = searchFoods(input.value);
+    results.innerHTML = hits.map(f =>
+      `<button type="button" data-food="${esc(f[0])}"><strong>${esc(f[0])}</strong><span>100g: ${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</span><em>${esc(f[5])} · ${f[6]}g</em></button>`
+    ).join('');
+  });
+  results.addEventListener('click', event => {
+    const btn = event.target.closest('[data-food]');
+    if (!btn) return;
+    selected = foodByName(btn.dataset.food);
+    if (!selected) return;
+    pickGrams.value = selected[6] || 100;
+    pickMeal.value = mealForHour();
+    paintPick();
+    pickGrams.focus();
+    pickGrams.select();
+  });
+  pickGrams.addEventListener('input', paintPick);
+  pick.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!selected) return;
+    const user = currentUser();
+    if (!user) return;
+    const grams = Math.min(2000, Math.max(1, parseInt(pickGrams.value, 10) || selected[6] || 100));
+    const s = scaleFood(selected, grams);
+    user.foodLog = user.foodLog || {};
+    const key = dayKey();
+    user.foodLog[key] = user.foodLog[key] || [];
+    user.foodLog[key].push({ name: selected[0], grams, meal: pickMeal.value, ...s, at: new Date().toISOString() });
+    saveCurrentUser(user);
+    selected = null;
+    pick.hidden = true;
+    input.value = '';
+    results.innerHTML = '';
+    renderTracker(user);
+  });
+  const logBox = document.getElementById('food-log');
+  if (logBox) logBox.addEventListener('click', event => {
+    const btn = event.target.closest('[data-food-del]');
+    if (!btn) return;
+    const user = currentUser();
+    if (!user) return;
+    const key = dayKey();
+    const list = (user.foodLog || {})[key] || [];
+    const idx = parseInt(btn.dataset.foodDel, 10);
+    if (!Number.isNaN(idx) && list[idx]) list.splice(idx, 1);
+    saveCurrentUser(user);
+    renderTracker(user);
+  });
+})();
+
+/* ---------- trainer: client diet block + intake ---------- */
+const clientDietHTML = m => {
+  const diet = m.customDiet;
+  const p = m.profile;
+  let html = '';
+  if (diet && diet.meals) {
+    const tg = getDietTargets(m);
+    html += `<p class="csub">CUSTOM · ${fmtNum(tg.kcal)} KCAL · P${fmtNum(tg.p)} C${fmtNum(tg.c)} F${fmtNum(tg.f)} · BY ${esc(String(diet.by)).toUpperCase()}</p><ul class="clist">` +
+      diet.meals.map((mm, i) => {
+        const meal = normMeal(mm, i);
+        return `<li><span><strong>${esc(meal.t)}${meal.time ? ` · ${esc(fmtClock(meal.time))}` : ''}</strong>${esc(meal.x)}${meal.kcal > 0 ? ` (${fmtNum(meal.kcal)} kcal · P${meal.p} C${meal.c} F${meal.f})` : ''}</span></li>`;
+      }).join('') + `</ul>`;
+  } else if (p && p.meals) {
+    html += '<p class="log-empty">Assessment template active — no custom plan yet.</p>';
+  } else {
+    html += '<p class="log-empty">No diet data.</p>';
+  }
+  const ate = dayIntake(m);
+  if (ate.count) {
+    const tg = getDietTargets(m);
+    html += `<p class="csub">TODAY: ATE ${fmtNum(ate.kcal)} / ${fmtNum(tg.kcal)} KCAL · P${fmtNum(Math.round(ate.p))}/${fmtNum(tg.p)} · C${fmtNum(Math.round(ate.c))}/${fmtNum(tg.c)} · F${fmtNum(Math.round(ate.f))}/${fmtNum(tg.f)} (${ate.count} ITEMS)</p>`;
+  }
+  return html;
+};
+
+/* ---------- trainer diet-dialog food finder + autosum (bound once) ---------- */
+(() => {
+  const dialog = document.getElementById('diet-dialog');
+  if (!dialog) return;
+  const input = document.getElementById('diet-find');
+  const gramsInput = document.getElementById('diet-find-grams');
+  const mealSel = document.getElementById('diet-find-meal');
+  const results = document.getElementById('diet-find-results');
+  input.addEventListener('input', () => {
+    const hits = searchFoods(input.value);
+    results.innerHTML = hits.map(f =>
+      `<button type="button" data-dfood="${esc(f[0])}"><strong>${esc(f[0])}</strong><span>100g: ${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</span><em>+</em></button>`
+    ).join('');
+  });
+  results.addEventListener('click', event => {
+    const btn = event.target.closest('[data-dfood]');
+    if (!btn) return;
+    const food = foodByName(btn.dataset.dfood);
+    if (!food) return;
+    const grams = Math.min(2000, Math.max(1, parseInt(gramsInput.value, 10) || 100));
+    const s = scaleFood(food, grams);
+    const block = dialog.querySelector(`.diet-meal[data-meal="${mealSel.value}"]`);
+    if (!block) return;
+    const box = block.querySelector('textarea');
+    const line = `${grams}g ${food[0]} — ${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f}`;
+    if (box) {
+      box.value = box.value ? `${box.value.replace(/\s+$/, '')}\n${line}` : line;
+      box.focus();
+    }
+    const acc = (k, v) => {
+      const inp = block.querySelector(`[data-mk="${k}"]`);
+      if (inp) inp.value = +(((parseFloat(inp.value) || 0) + v).toFixed(1));
+    };
+    acc('kcal', s.kcal); acc('p', s.p); acc('c', s.c); acc('f', s.f);
+  });
+  document.getElementById('diet-autosum').addEventListener('click', () => {
+    const sum = { kcal: 0, p: 0, c: 0, f: 0 };
+    dialog.querySelectorAll('.diet-meal').forEach(block => {
+      ['kcal', 'p', 'c', 'f'].forEach(k => {
+        const inp = block.querySelector(`[data-mk="${k}"]`);
+        sum[k] += (inp && parseFloat(inp.value)) || 0;
+      });
+    });
+    document.getElementById('diet-cal').value = Math.round(sum.kcal) || '';
+    document.getElementById('diet-pro').value = Math.round(sum.p) || '';
+    document.getElementById('diet-carb').value = Math.round(sum.c) || '';
+    document.getElementById('diet-fat').value = Math.round(sum.f) || '';
+  });
 })();
 
 // First paint — runs after every module above is defined.

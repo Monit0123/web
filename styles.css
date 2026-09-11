@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=28) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=29) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1284,5 +1284,371 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
   }
   .diet-form .field-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ===========================================================================
+   NUTRITION SYSTEM (?v=29) — tracker, food database, diet plans.
+   Profile side is light-themed; dialog (trainer) overrides are dark.
+   =========================================================================== */
+.pf-macro {
+  grid-template-columns: repeat(5, 1fr);
+}
+.pf-meal h4 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pf-meal h4 time {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: #7a4d12;
+  background: rgba(200, 162, 74, .18);
+  border: 1px solid rgba(200, 162, 74, .5);
+  border-radius: 99px;
+  padding: 2px 10px;
+  font-weight: 700;
+}
+.pf-meal small {
+  display: block;
+  margin-top: 8px;
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: #7a4d12;
+  font-weight: 700;
+}
+.track-card {
+  border: 1px solid #9da69e;
+  border-radius: 16px;
+  padding: 22px 24px;
+  margin: 34px 0 8px;
+  background: rgba(200, 162, 74, .06);
+}
+.track-big {
+  font-size: clamp(1.6rem, 3.4vw, 2.4rem);
+  letter-spacing: -.04em;
+  margin: 10px 0 12px;
+  color: #1c2420;
+}
+.track-big strong {
+  font-weight: 800;
+}
+.track-bar {
+  display: block;
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(28, 36, 32, .12);
+  overflow: hidden;
+}
+.track-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #a8802f, #c8a24a);
+  transition: width .3s ease;
+}
+.track-left {
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #54635d;
+  margin: 10px 0 0;
+}
+.track-macros {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+.track-macros > div {
+  border-top: 1px solid #9da69e;
+  padding-top: 10px;
+}
+.track-macros span {
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: #54635d;
+  display: block;
+}
+.track-macros strong {
+  display: block;
+  font-size: 1rem;
+  margin: 4px 0 8px;
+  color: #1c2420;
+}
+.track-title {
+  font-size: 15px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin: 30px 0 6px;
+  color: #1c2420;
+}
+.food-slot {
+  border-top: 1px solid #9da69e;
+  padding: 12px 0 4px;
+}
+.food-slot h4 {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  margin: 0 0 6px;
+  color: #1c2420;
+}
+.food-slot h4 em {
+  font-style: normal;
+  color: #7a4d12;
+}
+.food-slot ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: grid;
+  gap: 6px;
+}
+.food-slot li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: #43524b;
+}
+.food-slot li span {
+  display: block;
+}
+.food-slot li strong {
+  color: #1c2420;
+  margin-right: 8px;
+}
+.food-slot li button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid #9da69e;
+  background: transparent;
+  color: #54635d;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.food-search {
+  margin-top: 28px;
+  border-top: 1px solid #9da69e;
+  padding-top: 18px;
+}
+.food-search .today-tag {
+  color: #7a4d12;
+}
+.food-search > input {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid #9da69e;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: .95rem;
+  font-family: inherit;
+  background: #fff;
+  color: #1c2420;
+}
+.food-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.food-results button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  text-align: left;
+  border: 1px solid #9da69e;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  align-items: center;
+}
+.food-results button:hover {
+  border-color: #c8a24a;
+  background: rgba(200, 162, 74, .08);
+}
+.food-results strong {
+  font-size: .9rem;
+  color: #1c2420;
+}
+.food-results span {
+  font-size: .75rem;
+  color: #54635d;
+  grid-column: 1;
+}
+.food-results em {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  font-style: normal;
+  font-size: .7rem;
+  letter-spacing: .06em;
+  color: #7a4d12;
+  white-space: nowrap;
+}
+.food-pick {
+  margin-top: 12px;
+  border: 1px solid #c8a24a;
+  border-radius: 12px;
+  background: rgba(200, 162, 74, .1);
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+.food-pick strong {
+  font-size: .95rem;
+  color: #1c2420;
+}
+.food-pick-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.food-pick-row input,
+.food-pick-row select {
+  border: 1px solid #9da69e;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: .85rem;
+  font-family: inherit;
+  background: #fff;
+  color: #1c2420;
+}
+.food-pick-row input {
+  width: 110px;
+}
+.food-pick-row button {
+  background: #1c2420;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 22px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.food-pick small {
+  font-size: .75rem;
+  color: #54635d;
+}
+/* Trainer diet dialog (dark) */
+.diet-meal {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, .02);
+}
+.diet-meal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.diet-time {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 6px 8px;
+  font-size: .75rem;
+  font-family: inherit;
+  color-scheme: dark;
+}
+.diet-meal textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 8px 10px;
+  font-size: .8rem;
+  font-family: inherit;
+  resize: vertical;
+}
+.diet-macros {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.diet-macros input {
+  width: 100%;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 8px 10px;
+  font-size: .8rem;
+  font-family: inherit;
+}
+.diet-finder {
+  margin-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  padding-top: 14px;
+}
+.diet-finder-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 130px;
+  gap: 8px;
+  margin-top: 10px;
+}
+.diet-finder-row input,
+.diet-finder-row select {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 8px 10px;
+  font-size: .8rem;
+  font-family: inherit;
+}
+.diet-finder-row select option {
+  color: #141414;
+}
+.photo-dialog .food-results button {
+  background: rgba(255, 255, 255, .05);
+  border-color: rgba(255, 255, 255, .14);
+}
+.photo-dialog .food-results button:hover {
+  border-color: rgba(200, 162, 74, .6);
+  background: rgba(200, 162, 74, .1);
+}
+.photo-dialog .food-results strong {
+  color: #fff;
+}
+.photo-dialog .food-results span {
+  color: rgba(255, 255, 255, .6);
+}
+.photo-dialog .food-results em {
+  color: var(--gold);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+.diet-autosum {
+  margin-top: 14px;
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .pf-macro {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .track-macros {
+    grid-template-columns: 1fr;
+  }
+  .diet-finder-row {
+    grid-template-columns: 1fr 70px;
+  }
+  .diet-finder-row select {
+    grid-column: 1 / 3;
   }
 }
