@@ -903,7 +903,7 @@ const renderProfile = () => {
   view.hidden = !user;
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
     });
@@ -1097,6 +1097,7 @@ const normalizeDash = user => {
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
   if (user.mainGoal === undefined) { user.mainGoal = null; changed = true; }
   if (user.checkinCount === undefined) { user.checkinCount = 0; changed = true; }
+  ensure('notifs', []); ensure('notifSnooze', {}); ensure('notifChalls', []);
   if (!user.visits) {
     user.visits = (user.checkins || []).map(d => ({ at: `${d}T12:00:00.000`, method: 'manual' }));
     changed = true;
@@ -1361,6 +1362,7 @@ const renderDashboard = user => {
   renderLibrary(user);
   renderGoals(user);
   renderAttendance(user);
+  renderNotifs(user);
   renderChallenges(user);
   renderCoachSection(user);
   renderProgress(user).catch(() => {});
@@ -2636,8 +2638,8 @@ const renderCoachSection = user => {
   wrap.innerHTML = Object.keys(threads).length ? Object.entries(threads).map(([coach, msgs]) => {
     const fresh = (msgs || []).filter(m => m.from === 'coach' && m.at > ((user.coachReadAt || {})[coach] || '')).length;
     return `<div class="pc-thread"><h4>${esc(coachName(coach))}${fresh ? ` <em>${fresh} NEW</em>` : ''}</h4>` +
-      `<div class="pc-msgs">${(msgs || []).map(m => `<p class="${m.from === 'coach' ? 'from-coach' : 'from-me'}"><span>${esc(m.text)}</span><small>${esc(fmtDate(m.at))}</small></p>`).join('') || '<p class="log-empty">No messages yet.</p>'}</div>` +
-      `<form class="pc-reply" data-reply="${esc(coach)}"><input maxlength="500" placeholder="Reply to your coach…" required /><button type="submit">Send</button></form></div>`;
+      `<div class="pc-msgs">${(msgs || []).map(m => `<p class="${m.from === 'coach' ? 'from-coach' : 'from-me'}"><span>${m.img ? `<img src="${m.img}" alt="Shared photo" loading="lazy" />` : ''}${esc(m.text || '')}</span><small>${esc(fmtDate(m.at))}</small></p>`).join('') || '<p class="log-empty">No messages yet.</p>'}</div>` +
+      `<form class="pc-reply" data-reply="${esc(coach)}"><input maxlength="500" placeholder="Reply to your coach…" /><label class="pc-attach" title="Attach a photo">📎<input type="file" accept="image/*" hidden /></label><button type="submit">Send</button></form></div>`;
   }).join('') : '<p class="log-empty">No messages yet — your coach will reach out here.</p>';
   user.coachReadAt = user.coachReadAt || {};
   Object.keys(threads).forEach(c => { user.coachReadAt[c] = new Date().toISOString(); });
@@ -2646,18 +2648,23 @@ const renderCoachSection = user => {
 
 (() => {
   const threads = document.getElementById('pc-threads');
-  if (threads) threads.addEventListener('submit', event => {
+  if (threads) threads.addEventListener('submit', async event => {
     const form = event.target.closest('form[data-reply]');
     if (!form) return;
     event.preventDefault();
     const user = currentUser();
     if (!user) return;
     const coach = form.dataset.reply;
-    const input = form.querySelector('input');
+    const input = form.querySelector('input:not([type="file"])');
+    const fileEl = form.querySelector('input[type="file"]');
     const text = input.value.trim().slice(0, 500);
-    if (!text) return;
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    if (!text && !file) return;
+    const img = file ? await readImageCapped(file) : null;
+    if (!text && !img) return;
     user.threads[coach] = user.threads[coach] || [];
-    user.threads[coach].push({ from: 'member', text, at: new Date().toISOString() });
+    user.threads[coach].push({ from: 'member', text, img, at: new Date().toISOString() });
+    pruneThreadImages(user);
     saveCurrentUser(user);
     renderCoachSection(user);
   });
@@ -2756,7 +2763,7 @@ const renderClientDetail = (coach, m) => {
 
   body.innerHTML =
   `<p class="eyebrow">CLIENT FILE · ${esc(m.memberId || 'NO PASS YET')}</p><h2>${esc(m.name)}</h2>` +
-  `<p class="client-file-sub">${esc(m.email).toUpperCase()} · ${esc(memberStatus(m))} · STREAK ${stats.streak} · ${stats.total} VISITS · LV ${levelOf(pointsOf(m)).n}</p>` +
+  `<p class="client-file-sub">${esc(m.email).toUpperCase()} · ${esc(memberStatus(m))} · STREAK ${stats.streak} · ${stats.total} VISITS · LV ${levelOf(pointsOf(m)).n}</p>${m.phone ? `<p><a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${esc(m.phone)}?text=${encodeURIComponent(`Hi ${m.name}! This is your ONYX coach.`)}">💬 WhatsApp ${esc(m.name.split(' ')[0])} · ${esc(m.phone)}</a></p>` : ''}` +
   `<div class="cgrid">` +
   `<section class="cblock"><span class="today-tag">ACTIVE PROGRAM</span>` +
     (ap && ap.week
@@ -2766,7 +2773,7 @@ const renderClientDetail = (coach, m) => {
     `<div class="crow"><button type="button" data-act="modify"${ap && ap.week ? '' : ' disabled'}>Modify exercises</button><button type="button" data-act="build">Build new</button></div>` +
     `<div class="crow"><select id="assign-picker" aria-label="Program to assign">${programs.map(x => `<option value="${x.tag}:${x.id}">${esc(x.name)} · ${x.week.length}d</option>`).join('')}</select><button type="button" data-act="assign">Assign to client</button></div></section>` +
   `<section class="cblock"><span class="today-tag">SESSIONS</span><ul class="clist">` +
-    (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button></span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
+    (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button>${m.phone ? `<a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${m.phone}?text=${encodeURIComponent(`Hi ${m.name}, confirming your ${s.type || 'session'} on ${s.date} at ${s.time} — ONYX Athletic Club`)}">WA</a>` : ''}</span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
     `<form data-form="session" class="cform"><input type="date" name="sdate" required /><input type="time" name="stime" required /><input name="stype" maxlength="30" placeholder="Type — PT / Assessment" /><input name="snote" maxlength="80" placeholder="Note (optional)" /><button type="submit">Book session</button></form>` +
     (past.length ? `<p class="csub">PAST: ${past.slice(0, 5).map(s => `${esc(s.date.slice(5))} ${esc(s.status)}`).join(' · ')}</p>` : '') + `</section>` +
   `<section class="cblock"><span class="today-tag">GOALS</span>${clientGoalLine(m)}<ul class="clist">` +
@@ -2786,8 +2793,8 @@ const renderClientDetail = (coach, m) => {
     (notes.length ? notes.map(n => `<li><span><strong>${esc(fmtDate(n.at))} · ${n.shared ? 'SHARED' : 'PRIVATE'}</strong>${esc(n.text)}</span><span class="cbtns"><button type="button" data-act="note-share" data-id="${n.id}">${n.shared ? 'Unshare' : 'Share'}</button><button type="button" data-act="note-del" data-id="${n.id}">×</button></span></li>`).join('') : '<li class="log-empty">No notes yet.</li>') + `</ul>` +
     `<form data-form="note" class="cform"><input name="text" maxlength="280" placeholder="Note about this client…" required /><label class="ccheck"><input type="checkbox" name="shared" /> Share with member</label><button type="submit">Add note</button></form></section>` +
   `<section class="cblock"><span class="today-tag">MESSAGES</span><div class="pc-msgs cmsgs">` +
-    (thread.length ? thread.map(x => `<p class="${x.from === 'coach' ? 'from-me' : 'from-coach'}"><span>${esc(x.text)}</span><small>${esc(fmtDate(x.at))}</small></p>`).join('') : '<p class="log-empty">No messages yet.</p>') + `</div>` +
-    `<form data-form="msg" class="cform"><input name="text" maxlength="500" placeholder="Message this member…" required /><button type="submit">Send</button></form></section>` +
+    (thread.length ? thread.map(x => `<p class="${x.from === 'coach' ? 'from-me' : 'from-coach'}"><span>${x.img ? `<img src="${x.img}" alt="Shared photo" loading="lazy" />` : ''}${esc(x.text || '')}</span><small>${esc(fmtDate(x.at))}</small></p>`).join('') : '<p class="log-empty">No messages yet.</p>') + `</div>` +
+    `<form data-form="msg" class="cform"><input name="text" maxlength="500" placeholder="Message this member…" /><label class="pc-attach" title="Attach a photo">📎<input type="file" name="photo" accept="image/*" hidden /></label><button type="submit">Send</button></form></section>` +
   `<section class="cblock"><span class="today-tag">ATTENDANCE</span><p class="csub">${stats.pct}% · STREAK ${stats.streak} (BEST ${stats.best}) · ${stats.total} VISITS · ${stats.monthDays} THIS MONTH</p><ul class="clist">` +
     (visits.length ? [...visits].reverse().slice(0, 6).map(v => `<li><span><strong>${esc(fmtDate(v.at))}</strong>${esc((METHOD_LABELS[v.method] || v.method).toUpperCase())}</span></li>`).join('') : '<li class="log-empty">No visits yet.</li>') + `</ul></section>` +
   `<section class="cblock"><span class="today-tag">WORKOUT HISTORY</span>` +
@@ -2960,6 +2967,7 @@ const openDiet = () => {
         m.coachPrograms.push(assigned);
         (m.threads = m.threads || {})[coach.email] = m.threads[coach.email] || [];
         m.threads[coach.email].push({ from: 'coach', text: `New program assigned: ${src.name} (${src.week.length} days/week). It is live on your dashboard now.`, at: new Date().toISOString() });
+        pushNotif(m, '📋', `New program: ${src.name} assigned by ${coach.name}.`);
         saveMember(m);
         refreshClientDetail();
       }
@@ -2969,6 +2977,7 @@ const openDiet = () => {
         const s = (m.sessions || []).find(x => x.id === btn.dataset.id);
         if (!s) return;
         s.status = act === 'session-done' ? 'done' : 'cancelled';
+        pushNotif(m, s.status === 'done' ? '✅' : '❌', `Session on ${s.date} marked ${s.status}.`);
         if (act === 'session-done' && s.date === dayKey()) doCheckin('pt', m);
         saveMember(m);
         refreshClientDetail();
@@ -2995,7 +3004,7 @@ const openDiet = () => {
       }
     });
 
-    detail.addEventListener('submit', event => {
+    detail.addEventListener('submit', async event => {
       const form = event.target.closest('form[data-form]');
       if (!form) return;
       event.preventDefault();
@@ -3032,11 +3041,17 @@ const openDiet = () => {
         if (!val('sdate') || !val('stime')) return;
         m.sessions = m.sessions || [];
         m.sessions.push({ id: `s${Date.now().toString(36)}`, date: val('sdate'), time: val('stime'), type: val('stype').slice(0, 30) || 'Session', note: val('snote').slice(0, 80), status: 'scheduled' });
+        pushNotif(m, '📅', `Session booked: ${val('sdate')} ${val('stime')} (${val('stype').slice(0, 30) || 'Session'}).`);
       }
       if (kind === 'msg') {
-        if (!val('text')) return;
+        const f = form.elements.photo && form.elements.photo.files && form.elements.photo.files[0];
+        const img = f ? await readImageCapped(f) : null;
+        const text = val('text').slice(0, 500);
+        if (!text && !img) return;
         (m.threads = m.threads || {})[coach.email] = m.threads[coach.email] || [];
-        m.threads[coach.email].push({ from: 'coach', text: val('text').slice(0, 500), at: new Date().toISOString() });
+        m.threads[coach.email].push({ from: 'coach', text, img, at: new Date().toISOString() });
+        pruneThreadImages(m);
+        pushNotif(m, '💬', `New message from ${coach.name}.`);
       }
       saveMember(m);
       refreshClientDetail();
@@ -3110,6 +3125,7 @@ const openDiet = () => {
       if (!(fat >= 20 && fat <= 250)) return fail('Fat must be between 20 and 250 g.');
       fail('');
       m.customDiet = { meals, calories, protein, carbs, fat, by: coach.name, at: new Date().toISOString() };
+      pushNotif(m, '🥗', `New diet plan published by ${coach.name}.`);
       saveMember(m);
       dietDialog.close();
       refreshClientDetail();
@@ -4127,6 +4143,16 @@ const renderChallenges = user => {
     return `<div class="ch-card${done ? ' is-done' : ''}"><b>${c.emoji}</b><div><strong>${esc(c.name)}${done ? ' 🏆' : ''}</strong><span>${esc(c.desc)}</span>` +
       `<span class="ch-bar"><i style="width:${pct}%"></i></span><em>${fmtNum(Math.min(cur, c.target))} / ${fmtNum(c.target)} · +${c.reward} PTS</em></div></div>`;
   }).join('');
+  const doneIds = CHALLENGES.filter(c => { try { return (c.prog(user) || 0) >= c.target; } catch (err) { return false; } }).map(c => c.id);
+  user.notifChalls = user.notifChalls || [];
+  const fresh = doneIds.filter(id => !user.notifChalls.includes(id));
+  if (fresh.length || (user.notifLevel || 1) < lv.n) {
+    fresh.forEach(id => { const c = CHALLENGES.find(x => x.id === id); if (c) pushNotif(user, '🏆', `Challenge complete: ${c.name} (+${c.reward} pts)!`); });
+    if ((user.notifLevel || 1) < lv.n) pushNotif(user, '⭐', `Level up! You are now LV ${lv.n} ${lv.name}.`);
+    user.notifChalls = doneIds;
+    user.notifLevel = lv.n;
+    saveCurrentUser(user);
+  }
   document.getElementById('ch-month').textContent = new Date().toLocaleDateString('en-IN', { month: 'long' }).toUpperCase();
   renderBoard(user);
   document.getElementById('ch-rewards').innerHTML = REWARDS.map(r => {
@@ -4174,6 +4200,156 @@ const renderBoard = me => {
     boardMode = btn.dataset.board;
     const user = currentUser();
     if (user) renderBoard(user);
+  });
+})();
+
+/* ===========================================================================
+   COMMUNICATION — notification center (computed alerts + stored updates),
+   image messages, WhatsApp deep-links. True auto-SMS/push needs the backend;
+   everything here is the frontend half: computed live from real member data.
+   =========================================================================== */
+const pushNotif = (u, icon, text) => {
+  u.notifs = u.notifs || [];
+  u.notifs.unshift({ id: 'n' + Date.now().toString(36) + Math.floor(Math.random() * 90 + 10), icon, text: String(text).slice(0, 200), at: new Date().toISOString(), read: false });
+  if (u.notifs.length > 30) u.notifs.length = 30;
+};
+const readImageCapped = file => new Promise(resolve => {
+  try {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k));
+      c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  } catch (err) { resolve(null); }
+});
+const pruneThreadImages = u => {
+  const imgs = [];
+  Object.values(u.threads || {}).forEach(t => (t || []).forEach(m => { if (m.img) imgs.push(m); }));
+  imgs.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  while (imgs.length > 20) { const m = imgs.shift(); m.img = null; if (!m.text) m.text = '[photo expired]'; }
+};
+const computeNotifs = user => {
+  const out = [];
+  const today = dayKey();
+  if (user.plan && user.expiresAt) {
+    const left = Math.ceil((new Date(user.expiresAt) - Date.now()) / 86400000);
+    if (left < 0) out.push({ key: 'exp', icon: '⛔', text: 'Membership expired — renew to unlock training & diet plans.', goto: 'profile-membership' });
+    else if (left <= 7) out.push({ key: 'exp', icon: '⚠️', text: `Membership expires in ${left} day${left === 1 ? '' : 's'} (${fmtDate(user.expiresAt)}). Renew soon.`, goto: 'profile-membership' });
+  }
+  if (user.pendingPayment && !user.plan) out.push({ key: 'pend', icon: '💳', text: `Payment for ${user.pendingPayment.plan} confirming — ref ${user.pendingPayment.ref}.`, goto: 'profile-membership' });
+  let unread = 0;
+  Object.entries(user.threads || {}).forEach(([c, msgs]) => {
+    unread += (msgs || []).filter(m => m.from === 'coach' && m.at > ((user.coachReadAt || {})[c] || '')).length;
+  });
+  if (unread) out.push({ key: 'msg', icon: '💬', text: `${unread} unread trainer message${unread === 1 ? '' : 's'} — open Coach Corner.`, goto: 'profile-coach' });
+  const d2 = new Date();
+  d2.setDate(d2.getDate() + 2);
+  const soon = (user.sessions || []).filter(s => s.status === 'scheduled' && s.date >= today && s.date <= dayKey(d2))
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  if (soon.length) out.push({ key: 'sess', icon: '📅', text: `${soon.length} session${soon.length === 1 ? '' : 's'} booked — next ${fmtDate(`${soon[0].date}T12:00:00`)} ${soon[0].time}.`, goto: 'profile-coach' });
+  const visits = user.visits || [];
+  if (user.plan && visits.length) {
+    const gap = Math.floor((Date.now() - new Date(visits[visits.length - 1].at)) / 86400000);
+    if (gap >= 5) out.push({ key: 'away', icon: '👋', text: `We haven't seen you in ${gap} days — ready for your next workout?`, goto: 'profile-today' });
+  }
+  const st = calcStreak(user.checkins);
+  if (st >= 3 && !(user.checkins || []).includes(today)) out.push({ key: 'streak', icon: '🔥', text: `${st}-day streak at risk — train today to keep it alive.`, goto: 'profile-today' });
+  if (user.dob && String(user.dob).slice(5) === today.slice(5)) out.push({ key: 'bday', icon: '🎂', text: `Happy Birthday, ${user.name.split(' ')[0]}! Show this for 15% off your next renewal.` });
+  return out;
+};
+const unseenNotifs = user => {
+  const snooze = user.notifSnooze || {};
+  const today = dayKey();
+  const attn = computeNotifs(user).filter(n => snooze[n.key] !== today);
+  const fresh = (user.notifs || []).filter(n => !n.read);
+  return { attn, fresh, count: attn.length + fresh.length };
+};
+
+const renderNotifs = user => {
+  const section = document.getElementById('profile-notifs');
+  if (!section || !user) return;
+  section.hidden = false;
+  const { attn, fresh } = unseenNotifs(user);
+  const stored = user.notifs || [];
+  document.getElementById('nt-attn').innerHTML = attn.length ? attn.map(n =>
+    `<div class="nt-row is-attn"><b>${n.icon}</b><span>${esc(n.text)}</span>` +
+    `${n.goto ? `<button type="button" data-nt-goto="${n.goto}">View</button>` : ''}<button type="button" data-nt-snooze="${n.key}" aria-label="Dismiss">×</button></div>`
+  ).join('') : '<p class="log-empty">All clear — nothing needs you right now. ✓</p>';
+  document.getElementById('nt-list').innerHTML = stored.length ? stored.map(n =>
+    `<div class="nt-row${n.read ? '' : ' is-new'}"><b>${esc(n.icon || '🔔')}</b><span>${esc(n.text)}<small>${esc(fmtDate(n.at))}</small></span></div>`
+  ).join('') : '<p class="log-empty">Updates from your coach, plans, and challenges land here.</p>';
+  const bell = document.getElementById('nt-count');
+  if (bell) {
+    const c = attn.length + fresh.length;
+    bell.hidden = c === 0;
+    bell.textContent = c > 9 ? '9+' : c;
+  }
+  const dob = document.getElementById('nt-dob');
+  if (dob && !dob.value && user.dob) dob.value = user.dob;
+  const phone = document.getElementById('nt-phone');
+  if (phone && !phone.value && user.phone) phone.value = user.phone;
+  const wa = document.getElementById('nt-wa');
+  if (wa) wa.href = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(`Hi ONYX, I'm ${user.name} (${user.email}). Send me workout reminders on WhatsApp.`)}`;
+};
+
+/* ---------- notifications events (bound once) ---------- */
+(() => {
+  const bell = document.getElementById('nt-bell');
+  if (bell) bell.addEventListener('click', () => {
+    const el = document.getElementById('profile-notifs');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const section = document.getElementById('profile-notifs');
+  if (!section) return;
+  section.addEventListener('click', event => {
+    const user = currentUser();
+    if (!user) return;
+    const go = event.target.closest('[data-nt-goto]');
+    if (go) {
+      const el = document.getElementById(go.dataset.ntGoto);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const sn = event.target.closest('[data-nt-snooze]');
+    if (sn) {
+      user.notifSnooze = user.notifSnooze || {};
+      user.notifSnooze[sn.dataset.ntSnooze] = dayKey();
+      saveCurrentUser(user);
+      renderNotifs(user);
+      return;
+    }
+    if (event.target.closest('#nt-readall')) {
+      (user.notifs || []).forEach(n => { n.read = true; });
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
+  });
+  section.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    if (event.target.id === 'nt-dob-form') {
+      const v = document.getElementById('nt-dob').value;
+      if (!v) return;
+      user.dob = v;
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
+    if (event.target.id === 'nt-phone-form') {
+      const v = document.getElementById('nt-phone').value.replace(/\D/g, '').slice(-10);
+      if (v.length !== 10) return;
+      user.phone = v;
+      saveCurrentUser(user);
+      renderNotifs(user);
+    }
   });
 })();
 
