@@ -753,7 +753,16 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
     openOnboard();
   } else {
     const record = users[email];
-    if (!record || !(await verifyPassword(record, password))) return fail('Wrong email or password.');
+    let lock = {};
+    try { lock = JSON.parse(localStorage.getItem('onyx_login_lock') || '{}'); } catch (err) { lock = {}; }
+    if (lock.until && Date.now() < lock.until) return fail('Too many tries — wait a minute and try again.');
+    if (!record || !(await verifyPassword(record, password))) {
+      lock.n = (lock.n || 0) + 1;
+      if (lock.n >= 5) { lock.until = Date.now() + 60000; lock.n = 0; }
+      try { localStorage.setItem('onyx_login_lock', JSON.stringify(lock)); } catch (err) { /* private mode */ }
+      return fail(lock.until && Date.now() < lock.until ? 'Too many tries — wait a minute and try again.' : 'Wrong email or password.');
+    }
+    try { localStorage.removeItem('onyx_login_lock'); } catch (err) { /* private mode */ }
     if (record.algo !== 'pbkdf2-sha256') {          // silently upgrade legacy hashes
       const { algo, salt, hash } = await hashPassword(password);
       Object.assign(record, { algo, salt, pass: hash });
@@ -2559,13 +2568,23 @@ const renderRecMember = member => {
   if (unlock) unlock.addEventListener('click', () => {
     const pin = document.getElementById('rec-pin').value;
     const err = document.getElementById('rec-pin-error');
+    let lock = {};
+    try { lock = JSON.parse(sessionStorage.getItem('onyx_pin_lock') || '{}'); } catch (e) { lock = {}; }
+    if (lock.until && Date.now() < lock.until) {
+      err.textContent = 'Too many wrong PINs — wait a minute.';
+      err.hidden = false;
+      return;
+    }
     if (pin === ONYX.RECEPTION_PIN) {
-      try { sessionStorage.setItem('onyx_staff', '1'); } catch (e) { /* private mode */ }
+      try { sessionStorage.setItem('onyx_staff', '1'); sessionStorage.removeItem('onyx_pin_lock'); } catch (e) { /* private mode */ }
       err.hidden = true;
       document.getElementById('rec-pin').value = '';
       syncRecViews();
     } else {
-      err.textContent = 'Wrong PIN — ask the duty manager.';
+      lock.n = (lock.n || 0) + 1;
+      if (lock.n >= 5) { lock.until = Date.now() + 60000; lock.n = 0; }
+      try { sessionStorage.setItem('onyx_pin_lock', JSON.stringify(lock)); } catch (e) { /* private mode */ }
+      err.textContent = lock.until && Date.now() < lock.until ? 'Too many wrong PINs — wait a minute.' : 'Wrong PIN — ask the duty manager.';
       err.hidden = false;
     }
   });

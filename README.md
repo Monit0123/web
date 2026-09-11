@@ -77,10 +77,37 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Demo config.** `COACH_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=38`. Bump that
+- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
+- **Cache busting.** Stylesheet and script are linked as `?v=39`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
 - `profile.html` is `noindex` and disallowed in `robots.txt`; it is a private
   member area.
+
+## Security (#19)
+
+In place on the frontend:
+
+- **Passwords.** PBKDF2-SHA256, 210k iterations, unique 16-byte salt per
+  user; legacy SHA-256 hashes upgrade silently on next login. Minimum 6
+  characters, enforced on signup and admin-created accounts.
+- **Rate limiting.** Login: 5 wrong attempts → 60s lockout (per browser).
+  Reception PIN: 5 wrong attempts → 60s lockout (per tab session).
+- **Sessions.** Member session is an email pointer in `sessionStorage`
+  (tab-scoped); staff unlock is a separate tab-scoped flag. No tokens or
+  secrets are stored anywhere or committed to the repo.
+- **XSS hygiene.** All user/member/lead content is rendered through `esc()`;
+  photo uploads are resized client-side and capped at ~30 per member.
+- **Transport.** Every `target="_blank"` link ships `rel="noopener"`.
+- **Gating.** `admin.html` requires an `ADMIN_EMAILS` (or limited
+  `MANAGER_EMAILS`) login and is `noindex` + disallowed in `robots.txt`,
+  alongside `profile.html` and `trainers.html`.
+- **Terms.** Membership terms, refunds, health and conduct live in
+  `privacy.html`, linked from every footer as “Privacy & Terms”.
+
+Honest backend-must list (client-side measures above are not enough alone):
+
+- Real auth (server sessions/JWT, httpOnly cookies), server-side rate
+  limits, hashed PIN + member-code verification, payment capture via the
+  gateway, and server-pushed reminders/OTP before production launch.
