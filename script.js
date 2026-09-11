@@ -920,7 +920,16 @@ const renderProfile = () => {
 
   // A pending payment gets a visible, actionable banner instead of a silent lock.
   let banner = document.getElementById('pf-pending');
-  if (pending && !user.plan) {
+  if (user.suspended) {
+    if (!banner) {
+      banner = document.createElement('p');
+      banner.id = 'pf-pending';
+      banner.className = 'pf-pending';
+      document.getElementById('pf-sub').after(banner);
+    }
+    banner.innerHTML = '⛔ <strong>Account suspended</strong> — check-ins and booking are paused. Please contact the front desk.';
+    banner.hidden = false;
+  } else if (pending && !user.plan) {
     if (!banner) {
       banner = document.createElement('p');
       banner.id = 'pf-pending';
@@ -2236,6 +2245,7 @@ const METHOD_LABELS = { manual: 'Manual', reception: 'Reception', geo: 'GPS', nf
 const doCheckin = (method, targetUser) => {
   const user = targetUser || currentUser();
   if (!user) return null;
+  if (user.suspended) return { suspended: true, user };
   user.visits = user.visits || [];
   user.checkins = user.checkins || [];
   const now = new Date();
@@ -2351,6 +2361,7 @@ const attStatus = (msg, isErr) => {
 const afterCheckin = (res, method) => {
   const user = currentUser();
   if (!res || !user) return;
+  if (res.suspended) { attStatus('Account suspended — please see the front desk.'); return; }
   if (res.dup) { attStatus(`Already checked in (${METHOD_LABELS[method] || method}). See you on the floor!`); return; }
   attStatus('');
   renderAttendance(user);
@@ -2573,6 +2584,7 @@ const renderRecMember = member => {
     const code = document.getElementById('rec-code').value;
     if (!verifyPassCode(member, code)) return recStatus('Code invalid or expired — ask for the fresh one.', true);
     const res = doCheckin('reception', member);
+    if (res && res.suspended) return recStatus('Account suspended — see the manager.', true);
     document.getElementById('rec-code').value = '';
     renderRecMember(readUsers()[member.email]);
     refreshRecToday();
@@ -2593,6 +2605,7 @@ const renderRecMember = member => {
     if (Math.abs(slotNow() - slot) > 2 || passCode(member, slot) !== m[2])
       return recStatus('QR expired — ask the member to show the fresh code.', true);
     const res = doCheckin('qr', member);
+    if (res && res.suspended) return recStatus('Account suspended — see the manager.', true);
     document.getElementById('rec-paste').value = '';
     renderRecMember(readUsers()[member.email]);
     refreshRecToday();
@@ -4466,6 +4479,7 @@ const renderAvail = coach => {
       const user = currentUser();
       const coach = coachList().find(c => c.email === bkSel.trainer);
       if (!user || !coach || !bkSel.date || !bkSel.time) return;
+      if (user.suspended) { pushNotif(user, '⛔', 'Booking blocked — your account is suspended. Please contact the front desk.'); saveCurrentUser(user); renderNotifs(user); return; }
       if (trainerBusy(coach.email, bkSel.date, bkSel.time) || memberBusy(user, bkSel.date, bkSel.time)) { renderBooking(user); return; }
       user.sessions = user.sessions || [];
       user.sessions.push({ id: 's' + Date.now().toString(36), date: bkSel.date, time: bkSel.time, type: bkSel.type, note: '', status: 'requested', coach: coach.email, by: 'member' });
@@ -4513,7 +4527,323 @@ const renderAvail = coach => {
   });
 })();
 
+/* ===========================================================================
+   ADMIN DASHBOARD (#11) + CRM LEADS (#12) + REMINDER QUEUES (#13 frontend).
+   Same-browser demo: operates on accounts + leads stored on this device.
+   Auto-SMS/email/push and real payment capture need the backend.
+   =========================================================================== */
+ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
+const isAdmin = user => !!user && Array.isArray(ONYX.ADMIN_EMAILS) &&
+  ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isCoach(user) ? 'coach' : 'member';
+const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
+const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
+const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
+const LEADS_KEY = 'onyx-leads';
+const normLead = l => ({
+  id: l.id || ('l' + Math.random().toString(36).slice(2, 9)),
+  name: l.name || 'Unknown', phone: l.phone || '',
+  source: /^\//.test(l.source || '') ? 'Website' : (l.source || 'Website'),
+  plan: l.plan || 'General',
+  status: ['lead', 'contacted', 'trial', 'joined'].includes(l.status) ? l.status : 'lead',
+  followUp: l.followUp || '', notes: l.notes || '', at: l.at || new Date().toISOString()
+});
+const readLeads = () => {
+  try { return (JSON.parse(localStorage.getItem(LEADS_KEY) || '[]') || []).map(normLead); }
+  catch (err) { return []; }
+};
+const writeLeads = l => localStorage.setItem(LEADS_KEY, JSON.stringify(l));
+const memberActive = m => !!m.plan && (!m.expiresAt || String(m.expiresAt).slice(0, 10) >= dayKey());
+const daysLeft = m => {
+  if (!m.plan || !m.expiresAt) return null;
+  return Math.ceil((new Date(m.expiresAt) - Date.now()) / 86400000);
+};
+const waNum = phone => String(phone || '').replace(/\D/g, '').slice(-10);
+const waLink = (phone, text) => {
+  const n = waNum(phone);
+  return n.length === 10 ? `https://wa.me/91${n}?text=${encodeURIComponent(text)}` : null;
+};
+let adminTab = 'members';
+let adminMember = null;
+
+const renderAdmin = () => {
+  if (!document.body.classList.contains('admin-page')) return;
+  const gate = document.getElementById('admin-gate');
+  const dash = document.getElementById('admin-dash');
+  const main = document.getElementById('admin-main');
+  const user = currentUser();
+  if (!user || !isAdmin(user)) {
+    gate.hidden = false; dash.hidden = true; main.hidden = true;
+    const box = document.getElementById('admin-gate-body');
+    if (!user) {
+      box.innerHTML = '<p class="about-hero-desc">Log in with your owner account to open the control center.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
+      document.getElementById('admin-login').addEventListener('click', () => openAuth('Log in with your admin account.'));
+    } else {
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — not an admin yet. Add it to <strong>ADMIN_EMAILS</strong> in site config.</p>`;
+    }
+    return;
+  }
+  gate.hidden = true; dash.hidden = false; main.hidden = false;
+  document.getElementById('admin-title').innerHTML = `Namaste,<br /><em>${esc(user.name.split(' ')[0])}.</em>`;
+  document.getElementById('admin-sub').textContent = `${user.email} · ${dayKey()}`;
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const today = dayKey();
+  const active = members.filter(memberActive);
+  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+  const pending = members.filter(m => m.pendingPayment).reduce((a, m) => a + (PLAN_PRICES[(m.pendingPayment || {}).plan] || 0), 0);
+  const new30 = members.filter(m => m.createdAt && (Date.now() - new Date(m.createdAt)) / 86400000 <= 30).length;
+  const expiring = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; }).length;
+  const todayAtt = members.reduce((a, m) => a + (m.visits || []).filter(v => String(v.at || '').slice(0, 10) === today).length, 0);
+  document.getElementById('admin-stats').innerHTML = [
+    [inr(revenue), 'REVENUE · ACTIVE PLANS'], [inr(pending), 'PENDING PAYMENTS'],
+    [active.length, 'ACTIVE MEMBERS'], [new30, 'NEW · 30 DAYS'],
+    [expiring, 'EXPIRING ≤ 7 DAYS'], [todayAtt, "TODAY'S CHECK-INS"]
+  ].map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.querySelectorAll('#adm-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.atab === adminTab));
+  document.getElementById('adm-members').hidden = adminTab !== 'members';
+  document.getElementById('adm-leads').hidden = adminTab !== 'leads';
+  document.getElementById('adm-reminders').hidden = adminTab !== 'reminders';
+  if (adminTab === 'members') renderAdminMembers();
+  if (adminTab === 'leads') renderAdminLeads();
+  if (adminTab === 'reminders') renderAdminReminders();
+};
+const refreshAdmin = () => renderAdmin();
+
+const renderAdminMembers = () => {
+  const q = (document.getElementById('mm-search').value || '').toLowerCase();
+  const pf = document.getElementById('mm-plan').value;
+  let members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  if (q) members = members.filter(m => `${m.name} ${m.email} ${m.phone || ''}`.toLowerCase().includes(q));
+  if (pf === 'none') members = members.filter(m => !m.plan);
+  else if (pf === 'exp') members = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; });
+  else if (pf) members = members.filter(m => m.plan === pf);
+  document.getElementById('mm-list').innerHTML = members.length ? members.map(m => {
+    const d = daysLeft(m);
+    const st = m.suspended ? '⛔ SUSPENDED' : memberActive(m) ? `ACTIVE${d !== null ? ` · ${d}D LEFT` : ''}` : m.plan ? 'EXPIRED' : (m.pendingPayment ? 'PENDING PAYMENT' : 'NO PLAN');
+    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)}</span></button>`;
+  }).join('') : '<p class="log-empty">No members match.</p>';
+  renderMemberPanel();
+};
+
+const renderMemberPanel = () => {
+  const box = document.getElementById('mm-panel');
+  const m = adminMember ? getMember(adminMember) : null;
+  if (!m) { box.innerHTML = adminMember ? '' : '<p class="log-empty">Select a member to manage.</p>'; return; }
+  const users = readUsers();
+  const coachName = m.assignedCoach && users[m.assignedCoach] ? users[m.assignedCoach].name : '—';
+  const visits = m.visits || [];
+  const last = visits.length ? fmtDate(visits[visits.length - 1].at) : 'Never';
+  const pend = m.pendingPayment;
+  box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''}</h3>` +
+    `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · LV ${levelOf(pointsOf(m)).n} · ${visits.length} VISITS · STREAK ${calcStreak(m.checkins)} · LAST ${esc(String(last)).toUpperCase()}</p>` +
+    `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())}</p>` +
+    (pend ? `<p class="csub">⏳ PENDING: ${esc(pend.plan)} · REF ${esc(pend.ref)} · ${inr(PLAN_PRICES[pend.plan] || 0)} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
+    `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
+    `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
+    `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
+    `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
+    (waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`)}">WhatsApp</a>` : '') + `</div></div>`;
+};
+
+const renderAdminLeads = () => {
+  const leads = readLeads();
+  const n = s => leads.filter(l => l.status === s).length;
+  const conv = leads.length ? ((n('joined') / leads.length) * 100).toFixed(1) : '0.0';
+  document.getElementById('ld-stats').innerHTML =
+    [[leads.length, 'TOTAL'], [n('lead'), 'NEW'], [n('contacted'), 'CONTACTED'], [n('trial'), 'TRIAL'], [n('joined'), 'JOINED'], [`${conv}%`, 'CONVERSION']]
+      .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.getElementById('ld-list').innerHTML = leads.length ? [...leads].reverse().map(l =>
+    `<div class="adm-row"><strong>${esc(l.name)} · ${esc(l.phone || 'no phone')}</strong>` +
+    `<span>${esc(l.source)} · wants ${esc(l.plan)} · ${esc(fmtDate(l.at))}</span>` +
+    `<span class="adm-lead-ctl"><select data-lead-status="${l.id}" aria-label="Status">${['lead', 'contacted', 'trial', 'joined'].map(s => `<option value="${s}"${l.status === s ? ' selected' : ''}>${s.toUpperCase()}</option>`).join('')}</select>` +
+    `<input type="date" data-lead-follow="${l.id}" value="${esc(l.followUp || '')}" aria-label="Follow-up date" />` +
+    (waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`)}">WA</a>` : '') +
+    `<button type="button" data-lead-del="${l.id}" aria-label="Delete lead">×</button></span></div>`
+  ).join('') : '<p class="log-empty">No leads yet — contact-form enquiries land here automatically.</p>';
+};
+
+const renderAdminReminders = () => {
+  const box = document.getElementById('rm-list');
+  const today = dayKey();
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const rows = [];
+  const waBtn = (m, text) => {
+    const link = waLink(m.phone, text);
+    return link ? `<a class="wa-link" target="_blank" rel="noopener" href="${link}">Send WA</a>` : '<span class="csub">NO PHONE</span>';
+  };
+  members.forEach(m => {
+    const d = daysLeft(m);
+    if (m.plan && d !== null && d >= 0 && d <= 7) rows.push({ icon: '⚠️', text: `${m.name} — membership expires in ${d}d (${m.plan}).`, act: waBtn(m, `Hi ${m.name}! Your ONYX ${m.plan} plan expires in ${d} day(s). Renew at the front desk to keep your streak alive.`) });
+    if (m.plan && d !== null && d < 0) rows.push({ icon: '⛔', text: `${m.name} — lapsed ${-d}d ago (${m.plan}).`, act: waBtn(m, `Hi ${m.name}! Your ONYX membership lapsed — come back this week and we'll waive the joining hassle.`) });
+    if (m.pendingPayment) rows.push({ icon: '💳', text: `${m.name} — pending ${m.pendingPayment.plan} · ref ${m.pendingPayment.ref}.`, act: `<button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm</button>` });
+    const visits = m.visits || [];
+    if (m.plan && visits.length) {
+      const gap = Math.floor((Date.now() - new Date(visits[visits.length - 1].at)) / 86400000);
+      if (gap >= 5) rows.push({ icon: '👋', text: `${m.name} — gone ${gap} days.`, act: waBtn(m, `Hi ${m.name}! We haven't seen you in ${gap} days — ready for your next workout? Your coach has a session waiting.`) });
+    }
+    if (m.dob) {
+      const md = String(m.dob).slice(5);
+      const thisYear = new Date(`${today.slice(0, 4)}-${md}T12:00:00`);
+      const diff = Math.ceil((thisYear - new Date(`${today}T12:00:00`)) / 86400000);
+      if (diff >= 0 && diff <= 7) rows.push({ icon: '🎂', text: `${m.name} — birthday ${diff === 0 ? 'TODAY' : 'in ' + diff + 'd'} (${m.dob}).`, act: waBtn(m, `Happy Birthday, ${m.name}! 🎂 Show this message for 15% off your next ONYX renewal.`) });
+    }
+  });
+  const todaySess = [];
+  members.forEach(m => (m.sessions || []).forEach(s => {
+    if ((s.status === 'scheduled' || s.status === 'requested') && s.date === today) todaySess.push({ m, s });
+  }));
+  todaySess.sort((a, b) => String(a.s.time).localeCompare(String(b.s.time)));
+  todaySess.forEach(({ m, s }) => rows.push({ icon: '📅', text: `TODAY ${s.time} — ${s.type} · ${m.name}${s.status === 'requested' ? ' (UNCONFIRMED)' : ''}.`, act: waBtn(m, `Hi ${m.name}! Reminder: your ${s.type} is today at ${s.time}. See you at ONYX!`) }));
+  box.innerHTML = rows.length ? rows.map(r => `<div class="adm-row"><strong>${r.icon} ${esc(r.text)}</strong><span class="adm-lead-ctl">${r.act}</span></div>`).join('')
+    : '<p class="log-empty">Nothing on the radar — quiet day. 🎉</p>';
+};
+
+/* ---------- admin events (bound once) ---------- */
+(() => {
+  const logout = document.getElementById('admin-logout');
+  if (logout) logout.addEventListener('click', () => {
+    localStorage.removeItem(SESSION_KEY);
+    adminMember = null;
+    updateAuthLinks();
+    renderAdmin();
+  });
+  const tabs = document.getElementById('adm-tabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-atab]');
+    if (!btn) return;
+    adminTab = btn.dataset.atab;
+    renderAdmin();
+  });
+  document.getElementById('mm-search').addEventListener('input', () => renderAdminMembers());
+  document.getElementById('mm-plan').addEventListener('change', () => renderAdminMembers());
+  document.getElementById('mm-add-toggle').addEventListener('click', () => {
+    const f = document.getElementById('mm-add');
+    f.hidden = !f.hidden;
+  });
+  document.getElementById('mm-add').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    const email = form.elements.email.value.trim().toLowerCase().slice(0, 80);
+    const phone = form.elements.phone.value.replace(/\D/g, '').slice(-10);
+    const plan = form.elements.plan.value || null;
+    const pw = form.elements.password.value;
+    if (name.length < 2 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || pw.length < 6) return;
+    const users = readUsers();
+    if (users[email]) return;
+    const { algo, salt, hash } = await hashPassword(pw);
+    users[email] = {
+      name, email, algo, salt, pass: hash, phone: phone.length === 10 ? phone : '',
+      createdAt: new Date().toISOString(), onboarded: false, profile: null,
+      plan, expiresAt: plan ? new Date(Date.now() + (PLAN_DAYS[plan] || 30) * 86400000).toISOString() : null,
+      pendingPayment: null
+    };
+    writeUsers(users);
+    form.reset();
+    form.hidden = true;
+    adminMember = email;
+    renderAdmin();
+  });
+  document.getElementById('mm-list').addEventListener('click', event => {
+    const row = event.target.closest('[data-mm]');
+    if (!row) return;
+    adminMember = row.dataset.mm;
+    renderAdminMembers();
+  });
+  document.getElementById('admin-main').addEventListener('click', event => {
+    const btn = event.target.closest('[data-act]');
+    if (!btn) return;
+    const m = getMember(btn.dataset.email);
+    if (!m || isAdmin(m)) return;
+    const me = currentUser();
+    if (btn.dataset.act === 'delmember') {
+      if (me && me.email === m.email) return;
+      if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
+      const users = readUsers();
+      delete users[m.email];
+      writeUsers(users);
+      if (adminMember === m.email) adminMember = null;
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'suspend') {
+      m.suspended = !m.suspended;
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'renew') {
+      const mo = parseInt(btn.dataset.mo, 10) || 1;
+      const base = m.expiresAt && new Date(m.expiresAt) > new Date() ? new Date(m.expiresAt) : new Date();
+      base.setDate(base.getDate() + mo * 30);
+      m.expiresAt = base.toISOString();
+      pushNotif(m, '✅', `Membership renewed — active till ${fmtDate(m.expiresAt)}.`);
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'setplan') {
+      const sel = document.getElementById('mm-newplan');
+      m.plan = sel ? sel.value || null : m.plan;
+      if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + (PLAN_DAYS[m.plan] || 30) * 86400000).toISOString();
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'setcoach') {
+      const sel = document.getElementById('mm-newcoach');
+      m.assignedCoach = sel && sel.value ? sel.value : null;
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'confirm-pay') {
+      const pend = m.pendingPayment;
+      if (!pend) return;
+      m.plan = pend.plan;
+      m.expiresAt = new Date(Date.now() + (PLAN_DAYS[pend.plan] || 30) * 86400000).toISOString();
+      m.pendingPayment = null;
+      pushNotif(m, '💳', `Payment of ${inr(PLAN_PRICES[pend.plan] || 0)} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
+      saveMember(m);
+      renderAdmin();
+    }
+  });
+  document.getElementById('ld-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    const phone = form.elements.phone.value.trim().slice(0, 13);
+    if (name.length < 2 || phone.length < 10) return;
+    const leads = readLeads();
+    leads.push(normLead({ name, phone, source: form.elements.source.value, plan: form.elements.plan.value }));
+    writeLeads(leads);
+    form.reset();
+    renderAdminLeads();
+  });
+  document.getElementById('ld-list').addEventListener('change', event => {
+    const st = event.target.closest('[data-lead-status]');
+    const fw = event.target.closest('[data-lead-follow]');
+    if (!st && !fw) return;
+    const leads = readLeads();
+    const id = (st || fw).dataset.leadStatus || (st || fw).dataset.leadFollow;
+    const lead = leads.find(l => l.id === id);
+    if (!lead) return;
+    if (st) lead.status = st.value;
+    if (fw) lead.followUp = fw.value;
+    writeLeads(leads);
+    renderAdminLeads();
+  });
+  document.getElementById('ld-list').addEventListener('click', event => {
+    const del = event.target.closest('[data-lead-del]');
+    if (!del) return;
+    writeLeads(readLeads().filter(l => l.id !== del.dataset.leadDel));
+    renderAdminLeads();
+  });
+})();
+
 // First paint — runs after every module above is defined.
 updateAuthLinks();
 renderProfile();
 renderCoach();
+renderAdmin();

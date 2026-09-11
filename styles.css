@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=34) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=35) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1288,7 +1288,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   NUTRITION SYSTEM (?v=34) — tracker, food database, diet plans.
+   NUTRITION SYSTEM (?v=35) — tracker, food database, diet plans.
    Profile side is light-themed; dialog (trainer) overrides are dark.
    =========================================================================== */
 .pf-macro {
@@ -1654,7 +1654,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   AI FITNESS ASSISTANT (?v=34) — member chat coach (profile page).
+   AI FITNESS ASSISTANT (?v=35) — member chat coach (profile page).
    =========================================================================== */
 .ai-fab {
   position: fixed;
@@ -1880,7 +1880,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS (?v=34) — goal picker, weight journey, metrics (light theme).
+   PERSONAL GOALS (?v=35) — goal picker, weight journey, metrics (light theme).
    =========================================================================== */
 .goal-pick {
   display: grid;
@@ -2125,7 +2125,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=34).
+   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=35).
    =========================================================================== */
 .pf-goals {
   background: #e9e5dc;
@@ -2342,7 +2342,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   COMMUNICATION (?v=34) — notification bell + center, image messages, WhatsApp.
+   COMMUNICATION (?v=35) — notification bell + center, image messages, WhatsApp.
    =========================================================================== */
 .nt-bell {
   position: fixed;
@@ -2540,7 +2540,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PT BOOKING (?v=34) — member slot picker + trainer availability editor.
+   PT BOOKING (?v=35) — member slot picker + trainer availability editor.
    =========================================================================== */
 .booking {
   background: #0b2422;
@@ -2691,5 +2691,217 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media (max-width: 640px) {
   .bk-type {
     max-width: 100%;
+  }
+}
+
+/* ===========================================================================
+   ADMIN DASHBOARD (#11) + CRM (#12) + REMINDERS (#13) — ?v=35.
+   =========================================================================== */
+.admin-main {
+  background: #041112;
+  border-top: 1px solid var(--line);
+}
+.adm-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+.adm-tabs button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 99px;
+  padding: 10px 24px;
+  font-size: .75rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+.adm-tabs button.is-on {
+  background: var(--lime);
+  color: var(--ink);
+  border-color: var(--lime);
+  font-weight: 800;
+}
+.adm-bar {
+  display: grid;
+  grid-template-columns: 1fr 200px auto;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.adm-bar input,
+.adm-bar select,
+.adm-add input,
+.adm-add select {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 10px;
+  color: #fff;
+  padding: 11px 14px;
+  font-size: .85rem;
+  font-family: inherit;
+  min-width: 0;
+}
+.adm-bar select option,
+.adm-add select option {
+  color: #141414;
+}
+.adm-bar .today-btn {
+  margin: 0;
+  white-space: nowrap;
+}
+.adm-add {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 14px;
+}
+.adm-add button {
+  background: var(--lime);
+  color: var(--ink);
+  border: none;
+  border-radius: 10px;
+  padding: 11px 18px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .8rem;
+}
+.adm-list {
+  display: grid;
+  gap: 8px;
+}
+button.adm-row {
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  width: 100%;
+}
+.adm-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, .02);
+  display: grid;
+  gap: 3px;
+}
+button.adm-row:hover {
+  border-color: var(--lime);
+}
+.adm-row.is-on {
+  border-color: var(--lime);
+  background: rgba(215, 255, 50, .06);
+}
+.adm-row strong {
+  color: #fff;
+  font-size: .9rem;
+}
+.adm-row > span {
+  font-size: .72rem;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.adm-lead-ctl {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 6px;
+}
+.adm-lead-ctl select,
+.adm-lead-ctl input {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 7px 10px;
+  font-size: .75rem;
+  font-family: inherit;
+  color-scheme: dark;
+}
+.adm-lead-ctl select option {
+  color: #141414;
+}
+.adm-lead-ctl button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: .75rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.adm-panel {
+  margin-top: 14px;
+  border: 1px solid rgba(215, 255, 50, .4);
+  border-radius: 14px;
+  padding: 18px 20px;
+  background: rgba(215, 255, 50, .04);
+}
+.adm-panel h3 {
+  color: #fff;
+  margin: 0 0 6px;
+}
+.adm-panel .csub {
+  margin: 6px 0;
+}
+.adm-panel button {
+  background: rgba(215, 255, 50, .12);
+  color: var(--lime);
+  border: 1px solid rgba(215, 255, 50, .4);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: .75rem;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.adm-panel select {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 7px 10px;
+  font-size: .75rem;
+  font-family: inherit;
+}
+.adm-panel select option {
+  color: #141414;
+}
+.adm-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.adm-stats > div {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 8px;
+  text-align: center;
+  background: rgba(255, 255, 255, .02);
+}
+.adm-stats strong {
+  display: block;
+  font-size: 1.3rem;
+  color: #fff;
+}
+.adm-stats span {
+  font-size: .6rem;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+@media (max-width: 720px) {
+  .adm-bar {
+    grid-template-columns: 1fr;
+  }
+  .adm-stats {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
