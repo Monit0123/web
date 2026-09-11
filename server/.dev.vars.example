@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local testing with `wrangler dev` (never commit real keys).
+# Use Razorpay TEST keys here; live keys go in `wrangler secret put …`.
+RAZORPAY_KEY_ID=rzp_test_XXXXXXXXXXXXXX
+RAZORPAY_KEY_SECRET=your_test_key_secret

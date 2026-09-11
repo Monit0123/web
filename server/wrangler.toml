@@ -1,0 +1,25 @@
+# Deploy config for the ONYX payments worker.
+# Full walkthrough in the repo README ("Deploy the payments worker").
+#
+# One-time setup:
+#   npm install -g wrangler     # or use: npx wrangler …
+#   wrangler login
+#   wrangler kv namespace create PAYMENTS
+#     -> paste the printed id below, replacing YOUR_KV_ID
+#   wrangler secret put RAZORPAY_KEY_ID
+#   wrangler secret put RAZORPAY_KEY_SECRET
+#   wrangler deploy
+
+name = "onyx-payments"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[[kv_namespaces]]
+binding = "PAYMENTS"
+id = "YOUR_KV_ID"
+
+[vars]
+# Comma-separated list of origins allowed to call this API.
+# trainwithonyx.fwh.is is the live site; monit0123.github.io is the mirror.
+# Add your custom domain here too when you get one (then `wrangler deploy`).
+ALLOWED_ORIGINS = "https://trainwithonyx.fwh.is, https://monit0123.github.io"

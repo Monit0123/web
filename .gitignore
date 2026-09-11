@@ -12,3 +12,4 @@ onyx-website.zip
 # Working files that should not ship
 work/
 *.patch
+.dev.vars

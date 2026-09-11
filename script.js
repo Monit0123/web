@@ -11,9 +11,16 @@ const ONYX = {
   // Real signup/login API. Leave '' to keep browser-local demo accounts.
   AUTH_ENDPOINT: '',
 
-  // Server route that verifies a Razorpay payment against the Payments API and
-  // returns { active: true, plan: '...' }.  ** Until this is set, no membership
-  // is ever activated in the browser ** — see beginPaymentFlow() below.
+  // Base URL of the payments worker in server/ (see the README, "Deploy the
+  // payments worker"), e.g. 'https://onyx-payments.yourname.workers.dev'.
+  // When set, plan checkout runs through Razorpay Orders + Checkout and the
+  // membership activates automatically the instant the worker confirms the
+  // payment — no staff involvement. Leave '' to keep the manual payment-link
+  // + WhatsApp flow.
+  PAYMENTS_API: '',
+
+  // Legacy single-route verifier, kept for compatibility. Ignored when
+  // PAYMENTS_API is set (the worker's /verify route is used instead).
   MEMBERSHIP_VERIFY_ENDPOINT: '',
 
   // Fallback contact channels used when CONTACT_ENDPOINT is blank.
@@ -618,21 +625,25 @@ const runPendingAction = () => {
    Payments API can, and that needs a key secret which must never ship to the
    client. So clicking "Continue" records a *pending* membership request and
    nothing else. Access is granted in exactly one place: a successful response
-   from ONYX.MEMBERSHIP_VERIFY_ENDPOINT. With no backend configured the member
-   stays pending and staff confirm manually — which is the correct, safe
-   default. It is never possible to unlock paid content by opening and closing
-   the payment tab.
+   from the payments worker (ONYX.PAYMENTS_API, which checks every payment
+   against the Razorpay API server-side) or the legacy
+   ONYX.MEMBERSHIP_VERIFY_ENDPOINT. With neither configured the member stays
+   pending and staff confirm manually — which is the safe default. It is never
+   possible to unlock paid content by opening and closing the payment tab.
    --------------------------------------------------------------------------- */
 const paymentRef = () => 'ONYX-' + Date.now().toString(36).toUpperCase() + '-' +
   Math.random().toString(36).slice(2, 6).toUpperCase();
 
 const verifyMembership = async (user, payment) => {
-  if (!ONYX.MEMBERSHIP_VERIFY_ENDPOINT) return false;
+  const endpoint = ONYX.PAYMENTS_API
+    ? ONYX.PAYMENTS_API.replace(/\/+$/, '') + '/verify'
+    : ONYX.MEMBERSHIP_VERIFY_ENDPOINT;
+  if (!endpoint) return false;
   try {
-    const response = await fetch(ONYX.MEMBERSHIP_VERIFY_ENDPOINT, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null })
+      body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null, orderId: payment.orderId || null, signature: payment.signature || null })
     });
     if (!response.ok) return false;
     const result = await response.json();
@@ -654,10 +665,11 @@ const beginPaymentFlow = (link, plan) => {
     openAuth('Log in or create your free ONYX account to continue to secure payment.');
     return;
   }
-  const payment = { plan: `${plan} membership`, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null };
+  const payment = { plan: `${plan} membership`, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null, orderId: null, signature: null };
   user.pendingPayment = payment;                  // pending — NOT an active plan
   saveCurrentUser(user);
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
+  if (ONYX.PAYMENTS_API) { openRazorpayCheckout(user, payment); return; }
   window.open(link, '_blank', 'noopener');
   showPaymentPending(payment);
   if (document.body.classList.contains('profile-page')) renderProfile();
@@ -684,6 +696,123 @@ const showPaymentPending = payment => {
   if (!dialog.open) dialog.showModal();
 };
 
+// ---------------------------------------------------------------------------
+// Automated checkout (ONYX.PAYMENTS_API). Loads Razorpay Checkout on demand,
+// pays against an order the worker created, and activates the membership as
+// soon as the worker confirms the payment against the Razorpay API. Falls
+// back to the manual payment-link flow whenever the worker is unreachable.
+// ---------------------------------------------------------------------------
+const loadRazorpayCheckout = () => new Promise((resolve, reject) => {
+  if (window.Razorpay) return resolve();
+  const script = document.createElement('script');
+  script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+  script.onload = () => resolve();
+  script.onerror = () => reject(new Error('Razorpay Checkout failed to load.'));
+  document.head.appendChild(script);
+});
+
+const paymentsApi = path => ONYX.PAYMENTS_API.replace(/\/+$/, '') + path;
+
+const showPaymentResult = (payment, confirmed) => {
+  const dialog = document.getElementById('plans-dialog');
+  if (!dialog) return;
+  const main = dialog.querySelector('.plans-main');
+  const confirmation = dialog.querySelector('.plans-confirmation');
+  confirmation.querySelector('.chosen-plan').textContent = payment.plan;
+  const copy = confirmation.querySelector('.plans-confirmation-copy');
+  let note = confirmation.querySelector('.payment-ref');
+  if (!note) {
+    note = document.createElement('p');
+    note.className = 'payment-ref';
+    if (copy) copy.after(note); else confirmation.appendChild(note);
+  }
+  if (confirmed) {
+    if (copy) copy.textContent = 'Payment received — your membership is active. See you on the floor.';
+    note.innerHTML = `Reference <strong>${payment.ref}</strong> · paid in full.`;
+  } else {
+    if (copy) copy.textContent = 'Your payment is being confirmed — this usually takes a few seconds.';
+    note.innerHTML = `Your reference is <strong>${payment.ref}</strong>. This page updates automatically once the payment clears.`;
+  }
+  main.hidden = true;
+  confirmation.hidden = false;
+  if (!dialog.open) dialog.showModal();
+};
+
+const openRazorpayCheckout = async (user, payment) => {
+  let order = null;
+  try {
+    const response = await fetch(paymentsApi('/order'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: payment.plan.replace(/ membership$/, ''), ref: payment.ref, email: user.email })
+    });
+    if (!response.ok) throw new Error('order rejected');
+    order = await response.json();
+  } catch (error) {
+    console.warn('Payment service unreachable — falling back to the manual flow.', error);
+    showPaymentPending(payment);
+    return;
+  }
+  payment.orderId = order.order_id;
+  user.pendingPayment = payment;
+  saveCurrentUser(user);
+  try { await loadRazorpayCheckout(); } catch (error) {
+    console.warn(error);
+    showPaymentPending(payment);
+    return;
+  }
+  const checkout = new window.Razorpay({
+    key: order.key_id,
+    order_id: order.order_id,
+    amount: order.amount,
+    currency: order.currency,
+    name: 'ONYX Athletic Club',
+    description: payment.plan,
+    prefill: { name: user.name, email: user.email },
+    theme: { color: '#d7ff32' },
+    handler: async response => {
+      payment.paymentId = response.razorpay_payment_id;
+      payment.orderId = response.razorpay_order_id;
+      payment.signature = response.razorpay_signature;
+      user.pendingPayment = payment;
+      saveCurrentUser(user);
+      const confirmed = await verifyMembership(user, payment);
+      showPaymentResult(payment, confirmed);
+      if (confirmed) pollPaymentStatus(user, 0);   // no-op when already active
+      if (document.body.classList.contains('profile-page')) renderProfile();
+    },
+    modal: {
+      ondismiss: () => {
+        showPaymentPending(payment);
+        if (document.body.classList.contains('profile-page')) renderProfile();
+      }
+    }
+  });
+  checkout.open();
+};
+
+// Polls the worker for a pending payment — catches the case where the member
+// paid but the browser never ran the success handler (tab closed mid-checkout,
+// phone locked, connection dropped). Activation still happens only through
+// verifyMembership().
+const pollPaymentStatus = async (user, attempts = 12) => {
+  for (let i = 0; i < attempts; i++) {
+    const fresh = currentUser();
+    if (!fresh || fresh.plan || !fresh.pendingPayment) return;
+    const payment = fresh.pendingPayment;
+    try {
+      const response = await fetch(paymentsApi('/status') +
+        `?ref=${encodeURIComponent(payment.ref)}&email=${encodeURIComponent(fresh.email)}`);
+      if (response.ok && (await response.json()).active === true) {
+        await verifyMembership(fresh, payment);
+        if (document.body.classList.contains('profile-page')) renderProfile();
+        return;
+      }
+    } catch (error) { /* offline — retry */ }
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+};
+
 // If Razorpay redirects back with its status params, capture the payment id and
 // ask the backend (if any) to verify. Never trusted on its own.
 // Deferred to DOMContentLoaded: renderProfile() is declared further down this
@@ -691,15 +820,21 @@ const showPaymentPending = payment => {
 window.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
   const status = params.get('razorpay_payment_link_status');
-  if (!status) return;
-  const user = currentUser();
-  if (user && user.pendingPayment) {
-    user.pendingPayment.paymentId = params.get('razorpay_payment_id') || null;
-    user.pendingPayment.reportedStatus = status;
-    saveCurrentUser(user);
-    if (status === 'paid') await verifyMembership(user, user.pendingPayment);
+  if (status) {
+    const user = currentUser();
+    if (user && user.pendingPayment) {
+      user.pendingPayment.paymentId = params.get('razorpay_payment_id') || null;
+      user.pendingPayment.reportedStatus = status;
+      saveCurrentUser(user);
+      if (status === 'paid') await verifyMembership(user, user.pendingPayment);
+    }
+    history.replaceState(null, '', window.location.pathname);
+  } else {
+    // Automated mode: settle a payment that finished outside this tab
+    // (tab closed mid-checkout, phone locked, connection dropped).
+    const user = currentUser();
+    if (user && user.pendingPayment && ONYX.PAYMENTS_API && !user.plan) pollPaymentStatus(user);
   }
-  history.replaceState(null, '', window.location.pathname);
   if (document.body.classList.contains('profile-page')) renderProfile();
 });
 
@@ -912,9 +1047,12 @@ const renderProfile = () => {
       document.getElementById('pf-sub').after(banner);
     }
     const message = `Hi ONYX, I've paid for ${pending.plan}. My reference is ${pending.ref}.`;
-    banner.innerHTML = `We're confirming your payment for <strong>${pending.plan}</strong> — reference ` +
-      `<strong>${pending.ref}</strong>. Your plans unlock the moment it clears. ` +
-      `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}" target="_blank" rel="noopener">Nudge us on WhatsApp</a>.`;
+    banner.innerHTML = ONYX.PAYMENTS_API
+      ? `We're confirming your payment for <strong>${pending.plan}</strong> — reference ` +
+        `<strong>${pending.ref}</strong>. This updates automatically the moment it clears.`
+      : `We're confirming your payment for <strong>${pending.plan}</strong> — reference ` +
+        `<strong>${pending.ref}</strong>. Your plans unlock the moment it clears. ` +
+        `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}" target="_blank" rel="noopener">Nudge us on WhatsApp</a>.`;
     banner.hidden = false;
   } else if (banner) {
     banner.hidden = true;

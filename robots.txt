@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /profile.html
 
-Sitemap: https://onyxathletic.club/sitemap.xml
+Sitemap: https://trainwithonyx.fwh.is/sitemap.xml

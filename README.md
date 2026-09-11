@@ -19,62 +19,107 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 | `404.html` | Not-found page |
 
 Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`,
-`.nojekyll` (stops GitHub Pages running the folder through Jekyll).
+`.nojekyll` (stops GitHub Pages running the folder through Jekyll), and
+`server/` — the payments worker that automates membership activation.
 
 ## Before going live — do these three things
 
 ### 1. Set the real domain
 
-The site currently uses the placeholder `https://onyxathletic.club` in canonical
-tags, Open Graph URLs, `robots.txt` and `sitemap.xml`. Replace it everywhere:
+The site is live at `https://trainwithonyx.fwh.is/` (with a mirror at
+`https://monit0123.github.io/web/`). Every canonical tag, Open Graph URL,
+`robots.txt` and `sitemap.xml` entry points at the live domain. When you buy
+the real domain and point it at hosting, replace it everywhere:
 
 ```bash
-grep -rl 'onyxathletic.club' . | xargs sed -i 's|https://onyxathletic.club|https://YOUR-DOMAIN|g'
+grep -rl --exclude=README.md 'https://trainwithonyx.fwh.is' . \
+  | xargs sed -i 's|https://trainwithonyx.fwh.is|https://YOUR-DOMAIN|g'
 ```
 
-### 2. Wire up the backend
+### 2. Deploy the payments worker (automated checkout)
 
-Every integration lives in the `ONYX` config object at the top of `script.js`.
-All of them degrade safely when left blank, so the site works today — but leads
-and memberships need a server to be handled properly.
+By default the site uses the manual flow: Razorpay Payment Links + a reference
+ID + staff confirming each payment. The worker in `server/` replaces that with
+fully automatic activation — the member pays in the Razorpay Checkout modal and
+their membership unlocks the moment the payment clears. No human involvement.
 
-| Key | What it does when set | Behaviour when blank |
-| --- | --- | --- |
-| `CONTACT_ENDPOINT` | `POST {name, phone, source, at}` for every call-back request | Opens a pre-filled WhatsApp message and shows call/email links, plus a `localStorage` copy |
-| `AUTH_ENDPOINT` | Real signup/login | Browser-local demo accounts (PBKDF2-SHA256, 210k iterations, per-user salt) |
-| `MEMBERSHIP_VERIFY_ENDPOINT` | `POST {email, ref, plan, paymentId}` → `{active: true, plan}` unlocks the member's training and diet plans | Membership stays **pending** and staff activate manually |
+It is a Cloudflare Worker: free tier, no credit card, ~3 minutes to deploy.
 
-### 3. Understand how payments are gated
+1. Create a free account at <https://dash.cloudflare.com> (no card needed).
+2. Install the CLI and log in:
+   ```bash
+   npm install -g wrangler
+   wrangler login
+   ```
+3. Create the storage, then paste the printed `id` into `server/wrangler.toml`
+   (replacing `YOUR_KV_ID`):
+   ```bash
+   cd server
+   wrangler kv namespace create PAYMENTS
+   ```
+4. Add your Razorpay API keys as secrets (Dashboard → Account & Settings → API
+   Keys → Generate Test/Live key). Start with **test** keys:
+   ```bash
+   wrangler secret put RAZORPAY_KEY_ID
+   wrangler secret put RAZORPAY_KEY_SECRET
+   ```
+5. Deploy and note the URL it prints (e.g.
+   `https://onyx-payments.your-subdomain.workers.dev`):
+   ```bash
+   wrangler deploy
+   ```
+6. Point the site at it: set `PAYMENTS_API` at the top of `script.js` to the
+   worker URL, then bump the `?v=` on the `<script>` tag and push.
+7. Test with Razorpay's test mode (card `4111 1111 1111 1111`, any future
+   expiry/CVV, or the UPI success flow). When it works, re-run step 4 with
+   **live** keys and `wrangler deploy` again — payments then activate for real.
 
-> **A membership is only ever activated by a successful response from
-> `MEMBERSHIP_VERIFY_ENDPOINT`.**
+Notes:
 
-Clicking *Continue* on a plan opens the Razorpay Payment Link and records a
-**pending** request with a reference like `ONYX-M8F2K1-A9C3`. It does not grant
-access. This is deliberate: a browser cannot prove a payment succeeded — only
-the Razorpay Payments API can, and that requires a key secret which must never
-be shipped to the client. Without this endpoint it is impossible to unlock paid
-content by opening the payment tab and closing it.
+- **Prices live in two places.** `PLANS` at the top of `server/worker.js`
+  (in paise) must match the four plan cards in `index.html`. Change both.
+- The worker answers only to the origins listed in `ALLOWED_ORIGINS` in
+  `server/wrangler.toml`. When you move to a custom domain, add it there and
+  redeploy.
+- Offline tests for the verification logic: `cd server && node test.mjs`.
+- If the worker is ever down, the site automatically falls back to the manual
+  payment-link flow, so payments never stop.
 
-Your verification route should:
+The other two integrations (`CONTACT_ENDPOINT`, `AUTH_ENDPOINT` in `script.js`)
+are still open — leads currently hand off to WhatsApp, and accounts are
+browser-local. The worker can be extended to host both later.
 
-1. Take the posted `ref` / `paymentId` and the logged-in user's email.
-2. Call the Razorpay API server-side (or read your payment webhook records) to
-   confirm the payment is **captured** and the amount matches the plan.
-3. Return `{ "active": true, "plan": "3 months membership" }` only then.
+### 3. Understand how payments stay gated
 
-Also configure the Razorpay Payment Links to redirect back to the site so the
-`razorpay_payment_link_status` parameters are picked up automatically — the
-script already reads them on load and re-checks with your endpoint.
+> **A membership is only ever activated by a successful response from the
+> payments worker** (`PAYMENTS_API`), or the legacy
+> `MEMBERSHIP_VERIFY_ENDPOINT`. Both check the payment against the Razorpay
+> API server-side.
 
-The four live payment links are in `PAYMENT_LINKS` in `script.js`.
+Clicking *Continue* records a **pending** request with a reference like
+`ONYX-M8F2K1-A9C3` — it never grants access by itself. This is deliberate: a
+browser cannot prove a payment succeeded, because anything client-side can be
+forged with devtools. Only the Razorpay API can confirm a payment, and that
+needs the key secret, which must never ship to the client.
+
+The worker activates a membership only when all of these hold:
+
+1. The reference was created for **that member's email** (order record in KV).
+2. The Razorpay Checkout **signature** over `orderId|paymentId` matches.
+3. Razorpay's Payments API says the payment is **captured** (not just
+   authorized) — checked server-side.
+4. The captured **amount** equals the plan price.
+
+If the member closes the tab mid-checkout, the site polls the worker on their
+next visit, and the worker asks Razorpay about the order directly — so a
+completed payment activates even if the browser never saw the success screen.
 
 ## Notes
 
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Cache busting.** Stylesheet and script are linked as `?v=23`. Bump that
+- **Cache busting.** Stylesheet and script are linked as `?v=24`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
