@@ -15,7 +15,7 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 | `index.html` | Home — hero, pillars, coaches, timetable, memory wall, FAQ, plans, visit |
 | `about.html` | Philosophy, values, coaches, milestones |
 | `privacy.html` | Privacy policy, membership terms, refund policy |
-| `admin.html` | Admin control center — gated by `ADMIN_EMAILS`; revenue/members overview, member management (add/renew/plan/trainer/suspend/delete), lead CRM with pipeline + conversion, reminder queues with WhatsApp actions, inventory, staff + roles, reports (same-browser demo) |
+| `admin.html` | Admin control center — gated by `ADMIN_EMAILS`; revenue/members overview, member management (add/renew/plan/trainer/suspend/delete), lead CRM with pipeline + conversion, reminder queues with WhatsApp actions, inventory, staff + roles, reports, mini-CMS (same-browser demo) |
 | `trainers.html` | Trainer dashboard — gated by `COACH_EMAILS`; client files, program assign/modify/build, diet plans + client intake review, sessions + availability, goals, measurements, PRs, notes, messages, attendance + photo review (same-browser demo) |
 | `profile.html` | Member dashboard — membership, today overview, training, diet plans + calorie tracker + food database, programs, progress photos, attendance, coach corner, AI assistant, personal goals, challenges & leaderboards, notification center, PT booking |
 | `404.html` | Not-found page |
@@ -77,7 +77,7 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
 - **Demo config.** `COACH_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=36`. Bump that
+- **Cache busting.** Stylesheet and script are linked as `?v=37`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.

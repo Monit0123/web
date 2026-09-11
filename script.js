@@ -4603,19 +4603,22 @@ const renderAdmin = () => {
   const mgr = !isAdmin(user);
   document.querySelector('[data-atab="leads"]').style.display = mgr ? 'none' : '';
   document.querySelector('[data-atab="staff"]').style.display = mgr ? 'none' : '';
-  if (mgr && (adminTab === 'leads' || adminTab === 'staff')) adminTab = 'members';
+  document.querySelector('[data-atab="site"]').style.display = mgr ? 'none' : '';
+  if (mgr && (adminTab === 'leads' || adminTab === 'staff' || adminTab === 'site')) adminTab = 'members';
   document.getElementById('adm-members').hidden = adminTab !== 'members';
   document.getElementById('adm-leads').hidden = adminTab !== 'leads';
   document.getElementById('adm-reminders').hidden = adminTab !== 'reminders';
   document.getElementById('adm-inv').hidden = adminTab !== 'inv';
   document.getElementById('adm-staff').hidden = adminTab !== 'staff';
   document.getElementById('adm-reports').hidden = adminTab !== 'reports';
+  document.getElementById('adm-site').hidden = adminTab !== 'site';
   if (adminTab === 'members') renderAdminMembers();
   if (adminTab === 'leads') renderAdminLeads();
   if (adminTab === 'reminders') renderAdminReminders();
   if (adminTab === 'inv') renderAdminInv();
   if (adminTab === 'staff') renderAdminStaff();
   if (adminTab === 'reports') renderAdminReports();
+  if (adminTab === 'site') renderAdminSite();
 };
 const refreshAdmin = () => renderAdmin();
 
@@ -5047,7 +5050,177 @@ const renderAdminReports = () => {
   });
 })();
 
+/* ===========================================================================
+   MINI CMS (#17) — owner-editable prices, offer, announcement, FAQs, contact.
+   Overrides live in localStorage on this browser; defaults stay in the HTML.
+   Multi-device publishing + media uploads need the backend.
+   =========================================================================== */
+const SITE_KEY = 'onyx-site-content';
+const readSite = () => {
+  try { return JSON.parse(localStorage.getItem(SITE_KEY) || '{}') || {}; }
+  catch (err) { return {}; }
+};
+const writeSite = v => localStorage.setItem(SITE_KEY, JSON.stringify(v));
+const SITE_DEFAULT_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
+const SITE_PLAN_MONTHS = { 'Monthly': 1, '3 months': 3, '6 months': 6, '12 months': 12 };
+
+const applySiteContent = () => {
+  const site = readSite();
+  /* prices → live lookups (revenue, pending amounts) + every plan card */
+  const prices = site.prices || {};
+  Object.keys(SITE_DEFAULT_PRICES).forEach(plan => {
+    const val = parseFloat(prices[plan]);
+    if (val > 0) PLAN_PRICES[plan] = Math.round(val);
+  });
+  document.querySelectorAll('.plan-card[data-plan]').forEach(card => {
+    const plan = card.dataset.plan;
+    const val = parseFloat(prices[plan]);
+    if (!(val > 0)) return;
+    const strong = card.querySelector('.plan-price strong');
+    if (strong) strong.textContent = inr(val);
+    card.dataset.price = inr(val);
+    const perMo = card.querySelectorAll('ul li')[2];
+    const mo = SITE_PLAN_MONTHS[plan] || 1;
+    if (perMo) perMo.textContent = `≈ ${inr(Math.round(val / mo))} / month`;
+  });
+  /* offer banner above the membership plans */
+  const mem = document.getElementById('membership');
+  if (mem && site.offer && site.offer.active && site.offer.title) {
+    let banner = document.getElementById('cms-offer');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'cms-offer';
+      banner.className = 'cms-offer';
+      mem.prepend(banner);
+    }
+    banner.innerHTML = `<strong>${esc(site.offer.title)}</strong>${site.offer.text ? `<span>${esc(site.offer.text)}</span>` : ''}`;
+  }
+  /* site-wide announcement bar */
+  if (site.announcement && site.announcement.active && site.announcement.text && !sessionStorage.getItem('onyx-ann-x')) {
+    if (!document.getElementById('cms-announce')) {
+      const bar = document.createElement('div');
+      bar.id = 'cms-announce';
+      bar.className = 'cms-announce';
+      bar.innerHTML = `<span>${esc(site.announcement.text)}</span><button type="button" id="cms-announce-x" aria-label="Dismiss">×</button>`;
+      document.body.prepend(bar);
+      document.getElementById('cms-announce-x').addEventListener('click', () => {
+        sessionStorage.setItem('onyx-ann-x', '1');
+        bar.remove();
+      });
+    }
+  }
+  /* FAQ overrides (plain text — links need the HTML file) */
+  if (Array.isArray(site.faqs) && site.faqs.length) {
+    const list = document.querySelector('#faq .faq-list');
+    if (list) list.innerHTML = site.faqs.map(f =>
+      `<details><summary>${esc(f.q)}<span aria-hidden="true"></span></summary><p>${esc(f.a)}</p></details>`).join('');
+  }
+  /* contact overrides */
+  const contact = site.contact || {};
+  if (contact.hours) document.querySelectorAll('.visit-grid > div').forEach(div => {
+    const label = div.querySelector('span');
+    if (label && label.textContent.trim() === 'HOURS') {
+      const p = div.querySelector('p');
+      if (p) p.textContent = contact.hours;
+    }
+  });
+  if (contact.phone) {
+    const digits = String(contact.phone).replace(/\D/g, '');
+    if (digits.length >= 10) {
+      ONYX.WHATSAPP = digits;
+      ONYX.PHONE = '+' + digits;
+      document.querySelectorAll('.visit-grid > div').forEach(div => {
+        const label = div.querySelector('span');
+        if (label && label.textContent.trim() === 'CALL US') {
+          const a = div.querySelector('a[href^="tel:"]');
+          if (a) { a.href = 'tel:+' + digits; a.textContent = '+' + digits.slice(0, 2) + ' ' + digits.slice(2); }
+        }
+      });
+    }
+  }
+  if (contact.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) {
+    document.querySelectorAll('a[href^="mailto:"]').forEach(a => {
+      a.href = 'mailto:' + contact.email;
+      if (a.textContent.includes('@')) a.textContent = contact.email;
+    });
+  }
+  if (contact.address) document.querySelectorAll('.visit-grid > div').forEach(div => {
+    const label = div.querySelector('span');
+    const p = div.querySelector('p');
+    if (label && label.textContent.trim() === 'ADDRESS' && p && p.firstChild) {
+      p.firstChild.textContent = contact.address + ', ';
+    }
+  });
+};
+
+const renderAdminSite = () => {
+  const site = readSite();
+  const form = document.getElementById('site-form');
+  if (!form) return;
+  const prices = site.prices || {};
+  form.elements.pMonthly.value = prices['Monthly'] || '';
+  form.elements.p3.value = prices['3 months'] || '';
+  form.elements.p6.value = prices['6 months'] || '';
+  form.elements.p12.value = prices['12 months'] || '';
+  form.elements.offerTitle.value = (site.offer || {}).title || '';
+  form.elements.offerText.value = (site.offer || {}).text || '';
+  form.elements.offerOn.checked = !!(site.offer || {}).active;
+  form.elements.annText.value = (site.announcement || {}).text || '';
+  form.elements.annOn.checked = !!(site.announcement || {}).active;
+  form.elements.faqs.value = Array.isArray(site.faqs) ? site.faqs.map(f => `${f.q}\n${f.a}`).join('\n\n') : '';
+  form.elements.phone.value = (site.contact || {}).phone || '';
+  form.elements.email.value = (site.contact || {}).email || '';
+  form.elements.hours.value = (site.contact || {}).hours || '';
+  form.elements.address.value = (site.contact || {}).address || '';
+  const note = document.getElementById('site-saved');
+  if (note) note.textContent = '';
+};
+
+(() => {
+  const form = document.getElementById('site-form');
+  if (!form) return;
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const num = v => { const n = parseFloat(v); return n > 0 ? Math.round(n) : undefined; };
+    const prices = {};
+    [['Monthly', form.elements.pMonthly.value], ['3 months', form.elements.p3.value],
+     ['6 months', form.elements.p6.value], ['12 months', form.elements.p12.value]].forEach(([plan, v]) => {
+      const n = num(v);
+      if (n) prices[plan] = n;
+    });
+    const faqs = String(form.elements.faqs.value || '').split(/\n\s*\n/).map(block => {
+      const lines = block.split('\n').map(s => s.trim()).filter(Boolean);
+      return lines.length >= 2 ? { q: lines[0].slice(0, 140), a: lines.slice(1).join(' ').slice(0, 600) } : null;
+    }).filter(Boolean);
+    writeSite({
+      prices,
+      offer: { title: form.elements.offerTitle.value.trim().slice(0, 80), text: form.elements.offerText.value.trim().slice(0, 200), active: form.elements.offerOn.checked },
+      announcement: { text: form.elements.annText.value.trim().slice(0, 160), active: form.elements.annOn.checked },
+      faqs,
+      contact: {
+        phone: form.elements.phone.value.trim().slice(0, 18),
+        email: form.elements.email.value.trim().slice(0, 80),
+        hours: form.elements.hours.value.trim().slice(0, 80),
+        address: form.elements.address.value.trim().slice(0, 120)
+      }
+    });
+    sessionStorage.removeItem('onyx-ann-x');
+    applySiteContent();
+    const note = document.getElementById('site-saved');
+    if (note) note.textContent = 'Saved — live on this browser immediately.';
+  });
+  document.getElementById('site-reset').addEventListener('click', () => {
+    if (!window.confirm('Reset all site content to defaults?')) return;
+    localStorage.removeItem(SITE_KEY);
+    sessionStorage.removeItem('onyx-ann-x');
+    renderAdminSite();
+    const note = document.getElementById('site-saved');
+    if (note) note.textContent = 'Reset — reload the page to see defaults.';
+  });
+})();
+
 // First paint — runs after every module above is defined.
+applySiteContent();
 updateAuthLinks();
 renderProfile();
 renderCoach();

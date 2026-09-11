@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=36) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=37) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1288,7 +1288,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   NUTRITION SYSTEM (?v=36) — tracker, food database, diet plans.
+   NUTRITION SYSTEM (?v=37) — tracker, food database, diet plans.
    Profile side is light-themed; dialog (trainer) overrides are dark.
    =========================================================================== */
 .pf-macro {
@@ -1654,7 +1654,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   AI FITNESS ASSISTANT (?v=36) — member chat coach (profile page).
+   AI FITNESS ASSISTANT (?v=37) — member chat coach (profile page).
    =========================================================================== */
 .ai-fab {
   position: fixed;
@@ -1880,7 +1880,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS (?v=36) — goal picker, weight journey, metrics (light theme).
+   PERSONAL GOALS (?v=37) — goal picker, weight journey, metrics (light theme).
    =========================================================================== */
 .goal-pick {
   display: grid;
@@ -2125,7 +2125,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=36).
+   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=37).
    =========================================================================== */
 .pf-goals {
   background: #e9e5dc;
@@ -2342,7 +2342,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   COMMUNICATION (?v=36) — notification bell + center, image messages, WhatsApp.
+   COMMUNICATION (?v=37) — notification bell + center, image messages, WhatsApp.
    =========================================================================== */
 .nt-bell {
   position: fixed;
@@ -2540,7 +2540,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PT BOOKING (?v=36) — member slot picker + trainer availability editor.
+   PT BOOKING (?v=37) — member slot picker + trainer availability editor.
    =========================================================================== */
 .booking {
   background: #0b2422;
@@ -2695,7 +2695,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   ADMIN DASHBOARD (#11) + CRM (#12) + REMINDERS (#13) — ?v=36.
+   ADMIN DASHBOARD (#11) + CRM (#12) + REMINDERS (#13) — ?v=37.
    =========================================================================== */
 .admin-main {
   background: #041112;
@@ -2907,7 +2907,7 @@ button.adm-row:hover {
 }
 
 /* ===========================================================================
-   ADMIN TABS 2 — inventory, staff, reports (?v=36).
+   ADMIN TABS 2 — inventory, staff, reports (?v=37).
    =========================================================================== */
 .adm-row.is-low {
   border-color: rgba(255, 120, 90, .6);
@@ -2998,4 +2998,125 @@ button.adm-row:hover {
     grid-column: 2;
     text-align: left;
   }
+}
+
+/* ===========================================================================
+   MINI CMS (#17) — announcement bar, offer banner, site form (?v=37).
+   =========================================================================== */
+.cms-announce {
+  background: var(--lime);
+  color: var(--ink);
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 9px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+}
+.cms-announce button {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, .35);
+  color: var(--ink);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: .8rem;
+  flex-shrink: 0;
+}
+.cms-offer {
+  border: 1px solid rgba(215, 255, 50, .5);
+  background: rgba(215, 255, 50, .07);
+  border-radius: 14px;
+  padding: 14px 20px;
+  margin-bottom: 22px;
+  text-align: center;
+}
+.cms-offer strong {
+  display: block;
+  color: var(--lime);
+  font-size: 1rem;
+  letter-spacing: .06em;
+}
+.cms-offer span {
+  color: #dfe3de;
+  font-size: .82rem;
+}
+.site-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 0 0 12px;
+}
+.site-form legend {
+  color: var(--lime);
+  font-size: .65rem;
+  letter-spacing: .12em;
+  padding: 0 8px;
+}
+.site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.site-grid label {
+  display: grid;
+  gap: 5px;
+  font-size: .68rem;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+.site-grid label.wide {
+  grid-column: 1 / -1;
+}
+.site-grid label.check {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  color: #fff;
+}
+.site-form input,
+.site-form textarea {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 8px;
+  color: #fff;
+  padding: 10px 12px;
+  font-size: .85rem;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.site-form input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--lime);
+}
+.site-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.site-actions button[type="submit"] {
+  background: var(--lime);
+  color: var(--ink);
+  border: none;
+  border-radius: 10px;
+  padding: 11px 22px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+}
+.site-actions button[type="button"] {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: #fff;
+  border-radius: 10px;
+  padding: 11px 22px;
+  cursor: pointer;
+  font-family: inherit;
 }
