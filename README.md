@@ -15,7 +15,8 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 | `index.html` | Home — hero, pillars, coaches, timetable, memory wall, FAQ, plans, visit |
 | `about.html` | Philosophy, values, coaches, milestones |
 | `privacy.html` | Privacy policy, membership terms, refund policy |
-| `profile.html` | Member area — assessment results, training week, diet plan |
+| `trainers.html` | Trainer dashboard — gated by `COACH_EMAILS`; client files, program assign/modify/build, diet, sessions, goals, measurements, PRs, notes, messages, attendance + photo review (same-browser demo) |
+| `profile.html` | Member dashboard — membership, today overview, training, diet, programs, progress photos, attendance, coach corner |
 | `404.html` | Not-found page |
 
 Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`,
@@ -67,14 +68,15 @@ Also configure the Razorpay Payment Links to redirect back to the site so the
 `razorpay_payment_link_status` parameters are picked up automatically — the
 script already reads them on load and re-checks with your endpoint.
 
-The four live payment links are in `PAYMENT_LINKS` in `script.js`.
+The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `script.js`.
 
 ## Notes
 
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Cache busting.** Stylesheet and script are linked as `?v=23`. Bump that
+- **Demo config.** `COACH_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
+- **Cache busting.** Stylesheet and script are linked as `?v=28`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
