@@ -903,7 +903,7 @@ const renderProfile = () => {
   view.hidden = !user;
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
     });
@@ -1097,7 +1097,7 @@ const normalizeDash = user => {
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
   if (user.mainGoal === undefined) { user.mainGoal = null; changed = true; }
   if (user.checkinCount === undefined) { user.checkinCount = 0; changed = true; }
-  ensure('notifs', []); ensure('notifSnooze', {}); ensure('notifChalls', []);
+  ensure('notifs', []); ensure('notifSnooze', {}); ensure('notifChalls', []); ensure('availability', {});
   if (!user.visits) {
     user.visits = (user.checkins || []).map(d => ({ at: `${d}T12:00:00.000`, method: 'manual' }));
     changed = true;
@@ -1364,6 +1364,7 @@ const renderDashboard = user => {
   renderAttendance(user);
   renderNotifs(user);
   renderChallenges(user);
+  renderBooking(user);
   renderCoachSection(user);
   renderProgress(user).catch(() => {});
 };
@@ -2622,7 +2623,7 @@ const renderCoachSection = user => {
   const section = document.getElementById('profile-coach');
   if (!section || !user) return;
   const threads = user.threads || {};
-  const sessions = (user.sessions || []).filter(s => s.status === 'scheduled')
+  const sessions = (user.sessions || []).filter(s => s.status === 'scheduled' || s.status === 'requested')
     .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
   if (!user.assignedCoach && !Object.keys(threads).length && !sessions.length) { section.hidden = true; return; }
   section.hidden = false;
@@ -2632,7 +2633,7 @@ const renderCoachSection = user => {
     ? `YOUR COACH: ${coachName(user.assignedCoach).toUpperCase()}`
     : 'COACH MESSAGES';
   document.getElementById('pc-sessions').innerHTML = sessions.length
-    ? sessions.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong> — ${esc(s.type || 'Session')}${s.note ? ` · ${esc(s.note)}` : ''}</span></li>`).join('')
+    ? sessions.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong> — ${esc(s.type || 'Session')}${s.note ? ` · ${esc(s.note)}` : ''}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}</span><button type="button" data-bk-cancel="${s.id}">Cancel</button></li>`).join('')
     : '<li class="log-empty">No sessions booked yet.</li>';
   const wrap = document.getElementById('pc-threads');
   wrap.innerHTML = Object.keys(threads).length ? Object.entries(threads).map(([coach, msgs]) => {
@@ -2736,6 +2737,7 @@ const renderCoachDash = coach => {
     : '<p class="log-empty">No clients yet — claim members from the pool below.</p>';
   document.getElementById('coach-pool').innerHTML = pool.length ? pool.map(m => clientCard(coach, m, false)).join('')
     : '<p class="log-empty">No other members on this device yet.</p>';
+  renderAvail(coach);
 };
 
 const clientPhotoURLs = new Set();
@@ -2752,8 +2754,8 @@ const renderClientDetail = (coach, m) => {
   const prs = m.prs || [];
   const notes = [...(m.coachNotes || [])].reverse();
   const sessions = [...(m.sessions || [])].sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
-  const upcoming = sessions.filter(s => s.status === 'scheduled');
-  const past = sessions.filter(s => s.status !== 'scheduled').reverse();
+  const upcoming = sessions.filter(s => s.status === 'scheduled' || s.status === 'requested');
+  const past = sessions.filter(s => s.status !== 'scheduled' && s.status !== 'requested').reverse();
   const thread = ((m.threads || {})[coach.email]) || [];
   const ap = m.activeProgram;
   const diet = m.customDiet;
@@ -2773,7 +2775,7 @@ const renderClientDetail = (coach, m) => {
     `<div class="crow"><button type="button" data-act="modify"${ap && ap.week ? '' : ' disabled'}>Modify exercises</button><button type="button" data-act="build">Build new</button></div>` +
     `<div class="crow"><select id="assign-picker" aria-label="Program to assign">${programs.map(x => `<option value="${x.tag}:${x.id}">${esc(x.name)} · ${x.week.length}d</option>`).join('')}</select><button type="button" data-act="assign">Assign to client</button></div></section>` +
   `<section class="cblock"><span class="today-tag">SESSIONS</span><ul class="clist">` +
-    (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button>${m.phone ? `<a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${m.phone}?text=${encodeURIComponent(`Hi ${m.name}, confirming your ${s.type || 'session'} on ${s.date} at ${s.time} — ONYX Athletic Club`)}">WA</a>` : ''}</span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
+    (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}${s.status === 'requested' ? ' · REQUESTED' : ''}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns">${s.status === 'requested' ? `<button type="button" data-act="session-confirm" data-id="${s.id}">Confirm</button><button type="button" data-act="session-decline" data-id="${s.id}">Decline</button>` : `<button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button>`}${m.phone ? `<a class="wa-link" target="_blank" rel="noopener" href="https://wa.me/91${m.phone}?text=${encodeURIComponent(`Hi ${m.name}, confirming your ${s.type || 'session'} on ${s.date} at ${s.time} — ONYX Athletic Club`)}">WA</a>` : ''}</span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
     `<form data-form="session" class="cform"><input type="date" name="sdate" required /><input type="time" name="stime" required /><input name="stype" maxlength="30" placeholder="Type — PT / Assessment" /><input name="snote" maxlength="80" placeholder="Note (optional)" /><button type="submit">Book session</button></form>` +
     (past.length ? `<p class="csub">PAST: ${past.slice(0, 5).map(s => `${esc(s.date.slice(5))} ${esc(s.status)}`).join(' · ')}</p>` : '') + `</section>` +
   `<section class="cblock"><span class="today-tag">GOALS</span>${clientGoalLine(m)}<ul class="clist">` +
@@ -2973,11 +2975,11 @@ const openDiet = () => {
       }
       if (act === 'modify') openModify();
       if (act === 'diet') openDiet();
-      if (act === 'session-done' || act === 'session-cancel') {
+      if (act === 'session-done' || act === 'session-cancel' || act === 'session-confirm' || act === 'session-decline') {
         const s = (m.sessions || []).find(x => x.id === btn.dataset.id);
         if (!s) return;
-        s.status = act === 'session-done' ? 'done' : 'cancelled';
-        pushNotif(m, s.status === 'done' ? '✅' : '❌', `Session on ${s.date} marked ${s.status}.`);
+        s.status = act === 'session-done' ? 'done' : act === 'session-confirm' ? 'scheduled' : 'cancelled';
+        pushNotif(m, s.status === 'done' ? '✅' : s.status === 'scheduled' ? '📅' : '❌', `Session on ${s.date} ${s.status === 'scheduled' ? 'confirmed by your coach' : 'marked ' + s.status}.`);
         if (act === 'session-done' && s.date === dayKey()) doCheckin('pt', m);
         saveMember(m);
         refreshClientDetail();
@@ -3040,7 +3042,7 @@ const openDiet = () => {
       if (kind === 'session') {
         if (!val('sdate') || !val('stime')) return;
         m.sessions = m.sessions || [];
-        m.sessions.push({ id: `s${Date.now().toString(36)}`, date: val('sdate'), time: val('stime'), type: val('stype').slice(0, 30) || 'Session', note: val('snote').slice(0, 80), status: 'scheduled' });
+        m.sessions.push({ id: `s${Date.now().toString(36)}`, date: val('sdate'), time: val('stime'), type: val('stype').slice(0, 30) || 'Session', note: val('snote').slice(0, 80), status: 'scheduled', coach: coach.email, by: 'coach' });
         pushNotif(m, '📅', `Session booked: ${val('sdate')} ${val('stime')} (${val('stype').slice(0, 30) || 'Session'}).`);
       }
       if (kind === 'msg') {
@@ -4349,6 +4351,164 @@ const renderNotifs = user => {
       user.phone = v;
       saveCurrentUser(user);
       renderNotifs(user);
+    }
+  });
+})();
+
+/* ===========================================================================
+   PT BOOKING — trainers set weekly availability; members request slots;
+   trainers confirm/decline. Sessions carry coach + booker for conflict checks.
+   =========================================================================== */
+const BK_TYPES = ['Personal training', 'Consultation', 'Diet consultation', 'Fitness assessment'];
+const BK_SLOTS = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
+const BK_DAYS = [[1, 'MON'], [2, 'TUE'], [3, 'WED'], [4, 'THU'], [5, 'FRI'], [6, 'SAT']];
+let bkSel = { trainer: null, type: BK_TYPES[0], date: null, time: null };
+let availDay = (() => { const d = new Date().getDay(); return d === 0 ? 1 : d; })();
+const coachList = () => Object.values(readUsers()).filter(u => u && isCoach(u) && u.name);
+const coachAvail = c => (c.availability && typeof c.availability === 'object' ? c.availability : {});
+const trainerBusy = (email, date, time) => Object.values(readUsers()).some(u => (u.sessions || []).some(s =>
+  (s.status === 'scheduled' || s.status === 'requested') && s.date === date && s.time === time && (!s.coach || s.coach === email)));
+const memberBusy = (user, date, time) => (user.sessions || []).some(s =>
+  (s.status === 'scheduled' || s.status === 'requested') && s.date === date && s.time === time);
+
+const renderBooking = user => {
+  const section = document.getElementById('profile-booking');
+  if (!section || !user) return;
+  section.hidden = false;
+  const coaches = coachList();
+  if (!bkSel.trainer || !coaches.some(c => c.email === bkSel.trainer)) {
+    bkSel.trainer = (user.assignedCoach && coaches.some(c => c.email === user.assignedCoach)) ? user.assignedCoach : (coaches[0] && coaches[0].email) || null;
+    bkSel.date = null;
+    bkSel.time = null;
+  }
+  document.getElementById('bk-trainers').innerHTML = coaches.length ? coaches.map(c =>
+    `<button type="button" data-bk-trainer="${esc(c.email)}" class="${bkSel.trainer === c.email ? 'is-on' : ''}"><strong>${esc(c.name)}</strong><span>${c.email === user.assignedCoach ? 'YOUR COACH' : esc(c.email)}</span></button>`
+  ).join('') : '<p class="log-empty">No trainers on this device yet — add a coach account to enable booking.</p>';
+  document.getElementById('bk-type').value = bkSel.type;
+  const dates = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    if (d.getDay() === 0) continue;
+    dates.push(d);
+  }
+  if (bkSel.date && !dates.some(d => dayKey(d) === bkSel.date)) { bkSel.date = null; bkSel.time = null; }
+  document.getElementById('bk-dates').innerHTML = dates.map(d => {
+    const k = dayKey(d);
+    const label = d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+    return `<button type="button" data-bk-date="${k}" class="${bkSel.date === k ? 'is-on' : ''}">${label}</button>`;
+  }).join('');
+  const coach = coaches.find(c => c.email === bkSel.trainer);
+  let slotsHtml = '<p class="log-empty">Pick a date to see open slots.</p>';
+  if (coach && bkSel.date) {
+    const dow = String(new Date(`${bkSel.date}T12:00:00`).getDay());
+    const open = coachAvail(coach)[dow] || [];
+    if (!open.length) slotsHtml = '<p class="log-empty">Trainer is off that day — try another date.</p>';
+    else slotsHtml = open.map(t => {
+      const busy = trainerBusy(coach.email, bkSel.date, t) || memberBusy(user, bkSel.date, t);
+      return `<button type="button" data-bk-time="${t}" class="${bkSel.time === t ? 'is-on' : ''}"${busy ? ' disabled' : ''}>${busy ? '❌' : '✅'} ${esc(fmtClock(t))}</button>`;
+    }).join('');
+  } else if (!coach) slotsHtml = '<p class="log-empty">Pick a trainer first.</p>';
+  document.getElementById('bk-slots').innerHTML = slotsHtml;
+  const btn = document.getElementById('bk-confirm');
+  const ready = coach && bkSel.date && bkSel.time;
+  btn.disabled = !ready;
+  btn.textContent = ready ? `Request ${bkSel.type} · ${fmtDate(`${bkSel.date}T12:00:00`)} ${fmtClock(bkSel.time)}` : 'Pick trainer, date & time';
+  const mine = (user.sessions || []).filter(s => s.status === 'scheduled' || s.status === 'requested')
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  document.getElementById('bk-mine').innerHTML = mine.length ? mine.map(s =>
+    `<div class="nt-row"><b>📅</b><span><strong>${esc(s.type || 'Session')}</strong> · ${esc(fmtDate(`${s.date}T12:00:00`))} ${esc(fmtClock(s.time))}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}<small>${s.coach ? esc((readUsers()[s.coach] || {}).name || s.coach) : 'ONYX coach'}</small></span><button type="button" data-bk-cancel="${s.id}">Cancel</button></div>`
+  ).join('') : '<p class="log-empty">No upcoming bookings.</p>';
+};
+
+const renderAvail = coach => {
+  const days = document.getElementById('avail-days');
+  const slots = document.getElementById('avail-slots');
+  if (!days || !slots || !coach) return;
+  days.innerHTML = BK_DAYS.map(([n, label]) =>
+    `<button type="button" data-avail-day="${n}" class="${availDay === n ? 'is-on' : ''}">${label}</button>`).join('');
+  const open = coachAvail(coach)[String(availDay)] || [];
+  slots.innerHTML = BK_SLOTS.map(t =>
+    `<button type="button" data-avail-time="${t}" class="${open.includes(t) ? 'is-on' : ''}">${esc(fmtClock(t))}</button>`).join('');
+};
+
+/* ---------- booking events (bound once) ---------- */
+(() => {
+  const section = document.getElementById('profile-booking');
+  if (section) {
+    section.addEventListener('click', event => {
+      const user = currentUser();
+      if (!user) return;
+      const tr = event.target.closest('[data-bk-trainer]');
+      if (tr) { bkSel.trainer = tr.dataset.bkTrainer; bkSel.date = null; bkSel.time = null; renderBooking(user); return; }
+      const dt = event.target.closest('[data-bk-date]');
+      if (dt) { bkSel.date = dt.dataset.bkDate; bkSel.time = null; renderBooking(user); return; }
+      const tm = event.target.closest('[data-bk-time]');
+      if (tm && !tm.disabled) { bkSel.time = tm.dataset.bkTime; renderBooking(user); return; }
+      const cancel = event.target.closest('[data-bk-cancel]');
+      if (cancel) {
+        const s = (user.sessions || []).find(x => x.id === cancel.dataset.bkCancel);
+        if (s && (s.status === 'scheduled' || s.status === 'requested')) {
+          s.status = 'cancelled';
+          saveCurrentUser(user);
+          renderBooking(user);
+          renderCoachSection(user);
+          renderNotifs(user);
+        }
+      }
+    });
+    document.getElementById('bk-type').addEventListener('change', event => {
+      bkSel.type = event.target.value;
+      const user = currentUser();
+      if (user) renderBooking(user);
+    });
+    document.getElementById('bk-confirm').addEventListener('click', () => {
+      const user = currentUser();
+      const coach = coachList().find(c => c.email === bkSel.trainer);
+      if (!user || !coach || !bkSel.date || !bkSel.time) return;
+      if (trainerBusy(coach.email, bkSel.date, bkSel.time) || memberBusy(user, bkSel.date, bkSel.time)) { renderBooking(user); return; }
+      user.sessions = user.sessions || [];
+      user.sessions.push({ id: 's' + Date.now().toString(36), date: bkSel.date, time: bkSel.time, type: bkSel.type, note: '', status: 'requested', coach: coach.email, by: 'member' });
+      pushNotif(user, '📅', `Booking requested: ${bkSel.type} with ${coach.name} on ${bkSel.date} ${fmtClock(bkSel.time)}.`);
+      bkSel.time = null;
+      saveCurrentUser(user);
+      renderBooking(user);
+      renderCoachSection(user);
+      renderNotifs(user);
+    });
+  }
+  const mine = document.getElementById('pc-sessions');
+  if (mine) mine.addEventListener('click', event => {
+    const cancel = event.target.closest('[data-bk-cancel]');
+    if (!cancel) return;
+    const user = currentUser();
+    if (!user) return;
+    const s = (user.sessions || []).find(x => x.id === cancel.dataset.bkCancel);
+    if (s && (s.status === 'scheduled' || s.status === 'requested')) {
+      s.status = 'cancelled';
+      saveCurrentUser(user);
+      renderCoachSection(user);
+      renderBooking(user);
+      renderNotifs(user);
+    }
+  });
+  const roster = document.getElementById('coach-roster');
+  if (roster) roster.addEventListener('click', event => {
+    const coach = currentUser();
+    if (!coach) return;
+    const day = event.target.closest('[data-avail-day]');
+    if (day) { availDay = parseInt(day.dataset.availDay, 10); renderAvail(coach); return; }
+    const slot = event.target.closest('[data-avail-time]');
+    if (slot) {
+      coach.availability = coachAvail(coach);
+      const key = String(availDay);
+      coach.availability[key] = coach.availability[key] || [];
+      const t = slot.dataset.availTime;
+      coach.availability[key] = coach.availability[key].includes(t)
+        ? coach.availability[key].filter(x => x !== t)
+        : [...coach.availability[key], t].sort();
+      saveCurrentUser(coach);
+      renderAvail(coach);
     }
   });
 })();

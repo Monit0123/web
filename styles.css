@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=33) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=34) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1288,7 +1288,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   NUTRITION SYSTEM (?v=33) — tracker, food database, diet plans.
+   NUTRITION SYSTEM (?v=34) — tracker, food database, diet plans.
    Profile side is light-themed; dialog (trainer) overrides are dark.
    =========================================================================== */
 .pf-macro {
@@ -1654,7 +1654,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   AI FITNESS ASSISTANT (?v=33) — member chat coach (profile page).
+   AI FITNESS ASSISTANT (?v=34) — member chat coach (profile page).
    =========================================================================== */
 .ai-fab {
   position: fixed;
@@ -1880,7 +1880,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS (?v=33) — goal picker, weight journey, metrics (light theme).
+   PERSONAL GOALS (?v=34) — goal picker, weight journey, metrics (light theme).
    =========================================================================== */
 .goal-pick {
   display: grid;
@@ -2125,7 +2125,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=33).
+   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=34).
    =========================================================================== */
 .pf-goals {
   background: #e9e5dc;
@@ -2342,7 +2342,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   COMMUNICATION (?v=33) — notification bell + center, image messages, WhatsApp.
+   COMMUNICATION (?v=34) — notification bell + center, image messages, WhatsApp.
    =========================================================================== */
 .nt-bell {
   position: fixed;
@@ -2536,5 +2536,160 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
   .nt-bell {
     right: 18px;
     bottom: 150px;
+  }
+}
+
+/* ===========================================================================
+   PT BOOKING (?v=34) — member slot picker + trainer availability editor.
+   =========================================================================== */
+.booking {
+  background: #0b2422;
+  border-top: 1px solid var(--line);
+}
+.booking .eyebrow {
+  color: var(--lime);
+}
+.bk-trainers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.bk-trainers button {
+  text-align: left;
+  background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-family: inherit;
+  display: grid;
+  gap: 2px;
+}
+.bk-trainers button strong {
+  color: #fff;
+  font-size: .92rem;
+}
+.bk-trainers button span {
+  font-size: .65rem;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+.bk-trainers button.is-on {
+  border-color: var(--lime);
+  background: rgba(215, 255, 50, .07);
+}
+.bk-type {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: .88rem;
+  font-family: inherit;
+  max-width: 320px;
+  width: 100%;
+}
+.bk-type option {
+  color: #141414;
+}
+.bk-dates,
+.bk-slots {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bk-dates button,
+.bk-slots button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: #dfe3de;
+  border-radius: 99px;
+  padding: 9px 16px;
+  font-size: .72rem;
+  letter-spacing: .06em;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.bk-dates button.is-on,
+.bk-slots button.is-on {
+  background: var(--lime);
+  color: var(--ink);
+  border-color: var(--lime);
+  font-weight: 800;
+}
+.bk-slots button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+.bk-confirm {
+  margin-top: 20px;
+  background: var(--lime);
+  color: var(--ink);
+  border: none;
+  border-radius: 12px;
+  padding: 16px 28px;
+  font-size: .82rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+.bk-confirm:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.avail-days,
+.avail-slots {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.avail-days button,
+.avail-slots button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .2);
+  color: rgba(255, 255, 255, .75);
+  border-radius: 99px;
+  padding: 8px 16px;
+  font-size: .72rem;
+  letter-spacing: .06em;
+  cursor: pointer;
+  font-family: inherit;
+}
+.avail-days button.is-on,
+.avail-slots button.is-on {
+  background: var(--gold);
+  color: #141414;
+  border-color: var(--gold);
+  font-weight: 800;
+}
+#pc-sessions li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#pc-sessions li > span {
+  flex: 1;
+}
+#pc-sessions li button {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: #fff;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: .7rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.nt-row strong {
+  color: #fff;
+}
+@media (max-width: 640px) {
+  .bk-type {
+    max-width: 100%;
   }
 }
