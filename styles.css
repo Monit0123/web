@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=30) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=31) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1288,7 +1288,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   NUTRITION SYSTEM (?v=30) — tracker, food database, diet plans.
+   NUTRITION SYSTEM (?v=31) — tracker, food database, diet plans.
    Profile side is light-themed; dialog (trainer) overrides are dark.
    =========================================================================== */
 .pf-macro {
@@ -1654,7 +1654,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   AI FITNESS ASSISTANT (?v=30) — member chat coach (profile page).
+   AI FITNESS ASSISTANT (?v=31) — member chat coach (profile page).
    =========================================================================== */
 .ai-fab {
   position: fixed;
@@ -1876,5 +1876,250 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
     width: 100%;
     height: min(78vh, 640px);
     border-radius: 20px 20px 0 0;
+  }
+}
+
+/* ===========================================================================
+   PERSONAL GOALS (?v=31) — goal picker, weight journey, metrics (light theme).
+   =========================================================================== */
+.goal-pick {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin: 18px 0 8px;
+}
+.goal-pick button {
+  border: 1px solid #9da69e;
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px 8px 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  text-align: center;
+  font-family: inherit;
+  transition: border-color .2s, background .2s;
+}
+.goal-pick button:hover {
+  border-color: #c8a24a;
+}
+.goal-pick button.is-on {
+  border-color: #c8a24a;
+  background: rgba(200, 162, 74, .12);
+  box-shadow: inset 0 0 0 1px #c8a24a;
+}
+.goal-pick b {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.goal-pick strong {
+  font-size: .78rem;
+  color: #1c2420;
+}
+.goal-pick span {
+  font-size: .65rem;
+  color: #54635d;
+}
+.goal-card {
+  border: 1px solid #9da69e;
+  border-radius: 16px;
+  padding: 22px 24px;
+  margin-top: 16px;
+  background: rgba(200, 162, 74, .06);
+}
+.goal-head {
+  font-size: 12px;
+  letter-spacing: .12em;
+  color: #54635d;
+  margin: 0;
+}
+.goal-head strong {
+  color: #1c2420;
+  font-size: 1rem;
+}
+.goal-card .track-big {
+  margin-bottom: 8px;
+}
+.goal-miles {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+}
+.goal-miles span {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  background: rgba(200, 162, 74, .2);
+  border: 1px solid rgba(200, 162, 74, .55);
+  color: #7a4d12;
+  border-radius: 99px;
+  padding: 3px 12px;
+}
+.goal-done {
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: #7a4d12;
+  margin: 12px 0 0;
+}
+.goal-nums {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.goal-nums > div {
+  border-top: 1px solid #9da69e;
+  padding-top: 10px;
+}
+.goal-nums span {
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: #54635d;
+  display: block;
+}
+.goal-nums strong {
+  font-size: 1.05rem;
+  color: #1c2420;
+}
+.goal-target {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.goal-target input {
+  border: 1px solid #9da69e;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: .85rem;
+  font-family: inherit;
+  background: #fff;
+  color: #1c2420;
+  width: 180px;
+}
+.goal-target button,
+.goal-add button,
+.goal-row form button {
+  background: #1c2420;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .8rem;
+}
+.goal-link {
+  background: transparent;
+  border: 1px solid #c8a24a;
+  color: #7a4d12;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .8rem;
+}
+.goal-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.goal-metrics > div {
+  border: 1px solid #9da69e;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fff;
+}
+.goal-metrics strong {
+  display: block;
+  font-size: 1.25rem;
+  color: #1c2420;
+  letter-spacing: -.02em;
+}
+.goal-metrics span {
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: #54635d;
+}
+.goal-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid #9da69e;
+  padding: 12px 0;
+}
+.goal-row-main {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+.goal-row-main strong {
+  font-size: .9rem;
+  color: #1c2420;
+}
+.goal-row-main span {
+  font-size: .75rem;
+  color: #54635d;
+}
+.goal-row form {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.goal-row form input {
+  width: 80px;
+  border: 1px solid #9da69e;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: .8rem;
+  font-family: inherit;
+  background: #fff;
+  color: #1c2420;
+}
+.goal-row > button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid #9da69e;
+  background: transparent;
+  color: #54635d;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.goal-add {
+  display: grid;
+  grid-template-columns: 1fr 110px 130px auto;
+  gap: 8px;
+  margin-top: 14px;
+}
+.goal-add input {
+  border: 1px solid #9da69e;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: .85rem;
+  font-family: inherit;
+  background: #fff;
+  color: #1c2420;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .goal-pick {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .goal-nums {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .goal-metrics {
+    grid-template-columns: 1fr;
+  }
+  .goal-add {
+    grid-template-columns: 1fr 1fr;
   }
 }

@@ -782,7 +782,7 @@ onboardDialog.querySelectorAll('.ob-chips').forEach(groupEl => {
 document.getElementById('ob-skip').addEventListener('click', () => { onboardDialog.close(); runPendingAction(); });
 onboardDialog.addEventListener('close', () => runPendingAction());
 
-const GOAL_LABELS = { build: 'Build muscle', lose: 'Lose fat', fit: 'Get fit & lean', athlete: 'Athletic performance' };
+const GOAL_LABELS = { build: 'Build muscle', lose: 'Lose fat', fit: 'Get fit & lean', athlete: 'Athletic performance', strength: 'Strength', endurance: 'Endurance' };
 const EXP_LABELS = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' };
 
 const generateMemberPlan = p => {
@@ -903,7 +903,7 @@ const renderProfile = () => {
   view.hidden = !user;
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
     });
@@ -1095,6 +1095,7 @@ const normalizeDash = user => {
   ensure('memberReadAt', {}); ensure('coachReadAt', {}); ensure('foodLog', {}); ensure('aiChat', []);
   if (user.assignedCoach === undefined) { user.assignedCoach = null; changed = true; }
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
+  if (user.mainGoal === undefined) { user.mainGoal = null; changed = true; }
   if (!user.visits) {
     user.visits = (user.checkins || []).map(d => ({ at: `${d}T12:00:00.000`, method: 'manual' }));
     changed = true;
@@ -1357,6 +1358,7 @@ const renderDashboard = user => {
   renderMembership(user);
   renderToday(user);
   renderLibrary(user);
+  renderGoals(user);
   renderAttendance(user);
   renderCoachSection(user);
   renderProgress(user).catch(() => {});
@@ -2759,7 +2761,7 @@ const renderClientDetail = (coach, m) => {
     (upcoming.length ? upcoming.map(s => `<li><span><strong>${esc(fmtDate(`${s.date}T12:00:00`))} · ${esc(s.time)}</strong>${esc(s.type || 'Session')}${s.note ? ` — ${esc(s.note)}` : ''}</span><span class="cbtns"><button type="button" data-act="session-done" data-id="${s.id}">Done</button><button type="button" data-act="session-cancel" data-id="${s.id}">Cancel</button></span></li>`).join('') : '<li class="log-empty">Nothing booked.</li>') + `</ul>` +
     `<form data-form="session" class="cform"><input type="date" name="sdate" required /><input type="time" name="stime" required /><input name="stype" maxlength="30" placeholder="Type — PT / Assessment" /><input name="snote" maxlength="80" placeholder="Note (optional)" /><button type="submit">Book session</button></form>` +
     (past.length ? `<p class="csub">PAST: ${past.slice(0, 5).map(s => `${esc(s.date.slice(5))} ${esc(s.status)}`).join(' · ')}</p>` : '') + `</section>` +
-  `<section class="cblock"><span class="today-tag">GOALS</span><ul class="clist">` +
+  `<section class="cblock"><span class="today-tag">GOALS</span>${clientGoalLine(m)}<ul class="clist">` +
     (goals.length ? goals.map(g => `<li><span><strong>${esc(g.title)}</strong>${esc(String(g.current))} / ${esc(String(g.target))} ${esc(g.unit)}${g.done ? ' · DONE ✓' : ''}</span><span class="cbtns"><button type="button" data-act="goal-del" data-id="${g.id}">×</button></span></li>`).join('') : '<li class="log-empty">No goals set.</li>') + `</ul>` +
     `<form data-form="goal" class="cform"><input name="title" maxlength="50" placeholder="Goal — e.g. 100 kg squat" required /><input name="target" type="number" step="any" min="1" placeholder="Target" required /><input name="unit" maxlength="10" placeholder="Unit" required /><button type="submit">Add goal</button></form></section>` +
   `<section class="cblock"><span class="today-tag">MEASUREMENTS</span>` +
@@ -3537,9 +3539,9 @@ const aiPlateau = user => {
 
 const aiProtein = user => {
   const w = user.profile && +user.profile.weight;
-  const goal = user.profile ? user.profile.goal : null;
+  const goal = (user.mainGoal && user.mainGoal.type) || (user.profile ? user.profile.goal : null);
   const tg = getDietTargets(user);
-  const perKg = goal === 'lose' ? '2.0–2.2' : goal === 'build' ? '1.8–2.2' : '1.6–2.0';
+  const perKg = goal === 'lose' ? '2.0–2.2' : goal === 'build' || goal === 'strength' ? '1.8–2.2' : goal === 'endurance' ? '1.6–1.8' : '1.6–2.0';
   const range = w ? ` — that's <strong>${Math.round(w * parseFloat(perKg))}–${Math.round(w * (parseFloat(perKg) + 0.2))}g</strong> at your ${w} kg` : '';
   return `<p>Aim for <strong>${perKg}g protein per kg bodyweight</strong>${range}. Your plan targets <strong>${fmtNum(tg.p)}g/day</strong>.</p><p>Spread it over 3–4 meals (30–50g each absorbs best): eggs, paneer, chicken, dal + curd, whey on training days. Ask me <em>"protein in paneer"</em> for any food's numbers.</p>`;
 };
@@ -3789,6 +3791,222 @@ const aiViaEndpoint = async (user, text) => {
       saveCurrentUser(user);
       renderLibrary(user);
       bubble('bot', `<p>Saved <strong>${esc(lastAIWorkout.name)}</strong> to your program library — start it anytime from below.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-library">Open library →</button></p>`);
+    }
+  });
+})();
+
+/* ===========================================================================
+   PERSONAL GOALS — member picks a primary goal; progress syncs live with real
+   data: measurements + check-in weights, food log, workouts, steps, PRs, streak.
+   =========================================================================== */
+const MAIN_GOALS = {
+  build: { emoji: '💪', label: 'Muscle gain', desc: 'Surplus, PRs, growth.', focus: 'HYPERTROPHY · PROTEIN FIRST' },
+  lose: { emoji: '🔥', label: 'Fat loss', desc: 'Sustainable deficit.', focus: 'DEFICIT · STEPS · CONSISTENCY' },
+  strength: { emoji: '🏋️', label: 'Strength', desc: 'Big lifts, big numbers.', focus: 'SQUAT · BENCH · DEADLIFT' },
+  endurance: { emoji: '🏃', label: 'Endurance', desc: 'Engine + stamina.', focus: 'STEPS · CONDITIONING' },
+  fit: { emoji: '⚡', label: 'General fitness', desc: 'Look good, feel good.', focus: 'BALANCE · STREAK · HEALTH' }
+};
+const lastNDayKeys = n => {
+  const out = [];
+  for (let i = 0; i < n; i++) { const d = new Date(); d.setDate(d.getDate() - i); out.push(dayKey(d)); }
+  return out;
+};
+const sumMacroDay = (user, key, k) => ((user.foodLog || {})[key] || []).reduce((a, e) => a + (+e[k] || 0), 0);
+const mergedWeights = (user, extra = []) => {
+  const all = [...(user.measurements || []).filter(m => +m.weight > 0).map(m => ({ d: String(m.d || '').slice(0, 10), weight: +m.weight })), ...extra];
+  const uniq = [];
+  all.forEach(w => { const i = uniq.findIndex(u => u.d === w.d); if (i >= 0) uniq[i] = w; else uniq.push(w); });
+  return uniq.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+};
+const bestWeight = user => {
+  const ws = mergedWeights(user);
+  if (ws.length) return ws[ws.length - 1].weight;
+  return user.profile && +user.profile.weight > 0 ? +user.profile.weight : null;
+};
+const big3Total = user => {
+  const find = re => {
+    const hits = (user.prs || []).filter(r => re.test(r.lift || ''));
+    return hits.length ? +hits[hits.length - 1].weight || 0 : 0;
+  };
+  const s = find(/squat/i), b = find(/bench|press/i), d = find(/deadlift/i);
+  return { s, b, d, total: s + b + d, count: [s, b, d].filter(Boolean).length };
+};
+
+const paintWeightCard = (user, ws) => {
+  const box = document.getElementById('goal-card');
+  if (!box) return;
+  const mg = user.mainGoal || {};
+  const targetForm = cur =>
+    `<form class="goal-target" id="goal-target-form"><input type="number" step="0.1" min="30" max="250" value="${cur || ''}" placeholder="Target kg — e.g. 68" required aria-label="Target weight in kg" /><button type="submit">Set target</button></form>`;
+  const uniq = [];
+  (ws || []).forEach(w => { const i = uniq.findIndex(u => u.d === w.d); if (i >= 0) uniq[i] = w; else uniq.push(w); });
+  uniq.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+  const p = user.profile || {};
+  const start = +mg.start > 0 ? +mg.start : uniq.length ? uniq[0].weight : +p.weight || 0;
+  const current = uniq.length ? uniq[uniq.length - 1].weight : +p.weight || 0;
+  const target = +mg.target > 0 ? +mg.target : +p.target || 0;
+  if (!start || !current) {
+    box.innerHTML = `<p class="log-empty">Log your weight to start tracking — save a weekly check-in and it lands here automatically.</p><p><button type="button" class="goal-link" data-goal-goto="profile-progress">Log a check-in →</button></p>`;
+    return;
+  }
+  if (!target || target === start) {
+    box.innerHTML = `<p class="goal-head">CURRENT <strong>${current} kg</strong></p><p class="log-empty">Set a target and I'll track every kilo with you.</p>${targetForm('')}`;
+    return;
+  }
+  const losing = target < start;
+  const total = Math.abs(target - start);
+  const done = losing ? start - current : current - start;
+  const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+  const remain = Math.abs(target - current);
+  const miles = [25, 50, 75, 100].filter(m => pct >= m);
+  box.innerHTML = `<p class="goal-head">${losing ? 'LOSE' : 'GAIN'} <strong>${+total.toFixed(1)} kg</strong></p>` +
+    `<p class="track-big"><strong>${pct}%</strong></p><span class="track-bar"><i style="width:${pct}%"></i></span>` +
+    (miles.length ? `<p class="goal-miles">${miles.map(m => `<span>🏁 ${m}%</span>`).join('')}</p>` : '') +
+    (pct >= 100 ? `<p class="goal-done">🎉 GOAL REACHED — set your next target below.</p>` : '') +
+    `<div class="goal-nums"><div><span>CURRENT</span><strong>${current} kg</strong></div><div><span>TARGET</span><strong>${target} kg</strong></div><div><span>${losing ? 'TO LOSE' : 'TO GAIN'}</span><strong>${+remain.toFixed(1)} kg</strong></div><div><span>STARTED</span><strong>${start} kg</strong></div></div>` +
+    targetForm(target);
+};
+
+const renderGoalMetrics = user => {
+  const box = document.getElementById('goal-metrics');
+  if (!box) return;
+  const type = (user.mainGoal && user.mainGoal.type) || 'fit';
+  const keys7 = lastNDayKeys(7);
+  const kcalAvg = Math.round(keys7.reduce((a, k) => a + sumMacroDay(user, k, 'kcal'), 0) / 7);
+  const proAvg = Math.round(keys7.reduce((a, k) => a + sumMacroDay(user, k, 'p'), 0) / 7);
+  const tg = getDietTargets(user);
+  const workouts14 = lastNDayKeys(14).filter(k => user.workoutDone && user.workoutDone[k]).length;
+  const streak = calcStreak(user.checkins);
+  const stepsToday = (user.stepsLog && user.stepsLog[dayKey()]) || 0;
+  const steps7 = keys7.reduce((a, k) => a + ((user.stepsLog && user.stepsLog[k]) || 0), 0);
+  const b3 = big3Total(user);
+  const tile = (v, l) => `<div><strong>${v}</strong><span>${l}</span></div>`;
+  const tiles = {
+    lose: tile(`${fmtNum(kcalAvg)} / ${fmtNum(tg.kcal)}`, 'AVG KCAL · 7 DAYS') + tile(workouts14, 'WORKOUTS · 14 DAYS') + tile(streak, 'DAY STREAK'),
+    build: tile(`${fmtNum(proAvg)} / ${fmtNum(tg.p)}g`, 'AVG PROTEIN · 7 DAYS') + tile((user.prs || []).length, 'PRS LOGGED') + tile(workouts14, 'WORKOUTS · 14 DAYS'),
+    strength: tile(b3.count ? `${fmtNum(b3.total)} kg` : '—', b3.count ? `BIG 3 TOTAL · S${b3.s} B${b3.b} D${b3.d}` : 'LOG SQUAT / BENCH / DEADLIFT PRS') + tile((user.prs || []).length, 'PRS LOGGED') + tile(workouts14, 'WORKOUTS · 14 DAYS'),
+    endurance: tile(fmtNum(stepsToday), 'STEPS TODAY') + tile(fmtNum(steps7), 'STEPS · 7 DAYS') + tile(streak, 'DAY STREAK'),
+    fit: tile(streak, 'DAY STREAK') + tile(workouts14, 'WORKOUTS · 14 DAYS') + tile((user.visits || []).length, 'TOTAL VISITS')
+  };
+  box.innerHTML = tiles[type] || tiles.fit;
+};
+
+const renderGoalList = user => {
+  const box = document.getElementById('goal-list');
+  if (!box) return;
+  box.innerHTML = (user.goals || []).length ? (user.goals || []).map(g => {
+    const pct = +g.target > 0 ? Math.min(100, Math.round(((+g.current || 0) / +g.target) * 100)) : 0;
+    return `<div class="goal-row"><div class="goal-row-main"><strong>${esc(g.title)}</strong><span>${esc(String(g.current))} / ${esc(String(g.target))} ${esc(g.unit)}${g.done ? ' · DONE ✓' : ''}</span><span class="track-bar"><i style="width:${pct}%"></i></span></div>` +
+      `<form data-goal-up="${g.id}"><input type="number" step="any" value="${+g.current || 0}" aria-label="Current value" /><button type="submit">Set</button></form><button type="button" data-goal-del="${g.id}" aria-label="Delete goal">×</button></div>`;
+  }).join('') : '<p class="log-empty">No custom goals yet — add your first below.</p>';
+};
+
+const renderGoals = user => {
+  const section = document.getElementById('profile-goals');
+  if (!section || !user) return;
+  section.hidden = false;
+  if (!user.mainGoal || !MAIN_GOALS[user.mainGoal.type]) {
+    const map = { build: 'build', lose: 'lose', fit: 'fit', athlete: 'fit' };
+    user.mainGoal = {
+      type: (user.profile && map[user.profile.goal]) || 'fit',
+      target: user.profile && +user.profile.target > 0 ? +user.profile.target : null,
+      start: null
+    };
+    saveCurrentUser(user);
+  }
+  document.getElementById('goal-pick').innerHTML = Object.entries(MAIN_GOALS).map(([k, g]) =>
+    `<button type="button" data-goal="${k}" class="${user.mainGoal.type === k ? 'is-on' : ''}" aria-pressed="${user.mainGoal.type === k}"><b>${g.emoji}</b><strong>${g.label}</strong><span>${g.desc}</span></button>`
+  ).join('');
+  renderGoalMetrics(user);
+  renderGoalList(user);
+  paintWeightCard(user, mergedWeights(user));
+  ProgressDB.all(user.email).then(entries => {
+    const extra = (entries || []).filter(e => +e.weight > 0).map(e => ({ d: String(e.dateISO || '').slice(0, 10), weight: +e.weight }));
+    if (extra.length) paintWeightCard(user, mergedWeights(user, extra));
+  }).catch(() => {});
+};
+
+/* Trainer client-file focus line. */
+const clientGoalLine = m => {
+  const t = m.mainGoal && MAIN_GOALS[m.mainGoal.type] ? m.mainGoal.type : null;
+  let extra = '';
+  const ws = mergedWeights(m);
+  if (m.mainGoal && +m.mainGoal.target > 0 && ws.length) {
+    const start = +m.mainGoal.start > 0 ? +m.mainGoal.start : ws[0].weight;
+    const cur = ws[ws.length - 1].weight;
+    const total = Math.abs(m.mainGoal.target - start);
+    const done = m.mainGoal.target < start ? start - cur : cur - start;
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+    extra = ` · ${start} → ${cur} / ${m.mainGoal.target} KG (${pct}%)`;
+  }
+  return `<p class="csub">FOCUS: ${t ? MAIN_GOALS[t].label.toUpperCase() : '—'}${esc(extra)}</p>`;
+};
+
+/* ---------- goals events (bound once, delegated) ---------- */
+(() => {
+  const section = document.getElementById('profile-goals');
+  if (!section) return;
+  section.addEventListener('click', event => {
+    const pick = event.target.closest('[data-goal]');
+    const user = currentUser();
+    if (pick && user) {
+      if (!user.mainGoal || user.mainGoal.type !== pick.dataset.goal) {
+        user.mainGoal = { type: pick.dataset.goal, target: null, start: bestWeight(user) };
+        saveCurrentUser(user);
+        renderGoals(user);
+      }
+      return;
+    }
+    const go = event.target.closest('[data-goal-goto]');
+    if (go) {
+      const el = document.getElementById(go.dataset.goalGoto);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const del = event.target.closest('[data-goal-del]');
+    if (del && user) {
+      user.goals = (user.goals || []).filter(g => g.id !== del.dataset.goalDel);
+      saveCurrentUser(user);
+      renderGoalList(user);
+    }
+  });
+  section.addEventListener('submit', event => {
+    event.preventDefault();
+    const user = currentUser();
+    if (!user) return;
+    const form = event.target;
+    if (form.id === 'goal-target-form') {
+      const v = parseFloat(form.querySelector('input').value);
+      if (!(v >= 30 && v <= 250)) return;
+      user.mainGoal = user.mainGoal || { type: 'fit', start: null };
+      user.mainGoal.target = +v.toFixed(1);
+      if (!(+user.mainGoal.start > 0)) user.mainGoal.start = bestWeight(user);
+      saveCurrentUser(user);
+      renderGoals(user);
+      return;
+    }
+    if (form.id === 'goal-add-form') {
+      const title = form.elements.title.value.trim().slice(0, 50);
+      const target = parseFloat(form.elements.target.value);
+      const unit = form.elements.unit.value.trim().slice(0, 10) || 'units';
+      if (!title || !(target > 0)) return;
+      user.goals = user.goals || [];
+      user.goals.push({ id: 'g' + Date.now().toString(36), title, target, unit, current: 0, done: false });
+      saveCurrentUser(user);
+      form.reset();
+      renderGoalList(user);
+      return;
+    }
+    const upWrap = event.target.closest('form[data-goal-up]');
+    if (upWrap) {
+      const g = (user.goals || []).find(x => x.id === upWrap.dataset.goalUp);
+      if (!g) return;
+      const v = parseFloat(upWrap.querySelector('input').value);
+      if (!(v >= 0)) return;
+      g.current = v;
+      g.done = v >= +g.target && +g.target > 0;
+      saveCurrentUser(user);
+      renderGoalList(user);
     }
   });
 })();
