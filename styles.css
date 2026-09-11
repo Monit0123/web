@@ -810,7 +810,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 @media(max-width:680px){.att-methods{grid-template-columns:1fr 1fr}.att-stats{grid-template-columns:1fr 1fr}.att-stat:nth-child(2){border-right:0}.att-badges{grid-template-columns:1fr}.att-heat{overflow-x:auto;padding-bottom:8px}}
 
 /* ===========================================================================
-   TRAINER DASHBOARD (?v=35) — gated coach portal + member coach corner.
+   TRAINER DASHBOARD (?v=36) — gated coach portal + member coach corner.
    =========================================================================== */
 .coach-stats {
   display: grid;
@@ -1288,7 +1288,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   NUTRITION SYSTEM (?v=35) — tracker, food database, diet plans.
+   NUTRITION SYSTEM (?v=36) — tracker, food database, diet plans.
    Profile side is light-themed; dialog (trainer) overrides are dark.
    =========================================================================== */
 .pf-macro {
@@ -1654,7 +1654,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   AI FITNESS ASSISTANT (?v=35) — member chat coach (profile page).
+   AI FITNESS ASSISTANT (?v=36) — member chat coach (profile page).
    =========================================================================== */
 .ai-fab {
   position: fixed;
@@ -1880,7 +1880,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS (?v=35) — goal picker, weight journey, metrics (light theme).
+   PERSONAL GOALS (?v=36) — goal picker, weight journey, metrics (light theme).
    =========================================================================== */
 .goal-pick {
   display: grid;
@@ -2125,7 +2125,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=35).
+   PERSONAL GOALS bg fix + CHALLENGES & GAMIFICATION (?v=36).
    =========================================================================== */
 .pf-goals {
   background: #e9e5dc;
@@ -2342,7 +2342,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   COMMUNICATION (?v=35) — notification bell + center, image messages, WhatsApp.
+   COMMUNICATION (?v=36) — notification bell + center, image messages, WhatsApp.
    =========================================================================== */
 .nt-bell {
   position: fixed;
@@ -2540,7 +2540,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   PT BOOKING (?v=35) — member slot picker + trainer availability editor.
+   PT BOOKING (?v=36) — member slot picker + trainer availability editor.
    =========================================================================== */
 .booking {
   background: #0b2422;
@@ -2695,7 +2695,7 @@ body.pg-discreet #pd-photo:not(.revealed):not(.is-empty) #pd-cap{display:block}
 }
 
 /* ===========================================================================
-   ADMIN DASHBOARD (#11) + CRM (#12) + REMINDERS (#13) — ?v=35.
+   ADMIN DASHBOARD (#11) + CRM (#12) + REMINDERS (#13) — ?v=36.
    =========================================================================== */
 .admin-main {
   background: #041112;
@@ -2903,5 +2903,99 @@ button.adm-row:hover {
   }
   .adm-stats {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ===========================================================================
+   ADMIN TABS 2 — inventory, staff, reports (?v=36).
+   =========================================================================== */
+.adm-row.is-low {
+  border-color: rgba(255, 120, 90, .6);
+  background: rgba(255, 120, 90, .06);
+}
+.perm-table {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, .02);
+}
+.perm-table > strong {
+  display: block;
+  color: var(--lime);
+  font-size: .7rem;
+  letter-spacing: .12em;
+  margin-bottom: 10px;
+}
+.perm-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .78rem;
+  color: #dfe3de;
+}
+.perm-table th,
+.perm-table td {
+  text-align: left;
+  padding: 7px 10px 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+  vertical-align: top;
+}
+.perm-table th {
+  color: var(--muted);
+  font-size: .62rem;
+  letter-spacing: .1em;
+}
+.perm-table tr:last-child td {
+  border-bottom: 0;
+}
+.rp-block {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, .02);
+}
+.rp-block > strong {
+  display: block;
+  color: var(--lime);
+  font-size: .7rem;
+  letter-spacing: .12em;
+  margin-bottom: 8px;
+}
+.rp-block .csub {
+  margin: 8px 0;
+}
+.rp-bars {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+.rp-bars > div {
+  display: grid;
+  grid-template-columns: 110px 1fr 130px;
+  gap: 10px;
+  align-items: center;
+  font-size: .72rem;
+}
+.rp-bars span:first-child {
+  color: var(--muted);
+  letter-spacing: .06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-bars b {
+  color: #fff;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .rp-bars > div {
+    grid-template-columns: 80px 1fr;
+  }
+  .rp-bars b {
+    grid-column: 2;
+    text-align: left;
   }
 }

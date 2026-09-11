@@ -4535,7 +4535,7 @@ const renderAvail = coach => {
 ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
 const isAdmin = user => !!user && Array.isArray(ONYX.ADMIN_EMAILS) &&
   ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
-const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isCoach(user) ? 'coach' : 'member';
+const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isManager(user) ? 'manager' : isCoach(user) ? 'coach' : 'member';
 const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
 const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
@@ -4572,7 +4572,7 @@ const renderAdmin = () => {
   const dash = document.getElementById('admin-dash');
   const main = document.getElementById('admin-main');
   const user = currentUser();
-  if (!user || !isAdmin(user)) {
+  if (!user || (!isAdmin(user) && !isManager(user))) {
     gate.hidden = false; dash.hidden = true; main.hidden = true;
     const box = document.getElementById('admin-gate-body');
     if (!user) {
@@ -4600,12 +4600,22 @@ const renderAdmin = () => {
     [expiring, 'EXPIRING ≤ 7 DAYS'], [todayAtt, "TODAY'S CHECK-INS"]
   ].map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
   document.querySelectorAll('#adm-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.atab === adminTab));
+  const mgr = !isAdmin(user);
+  document.querySelector('[data-atab="leads"]').style.display = mgr ? 'none' : '';
+  document.querySelector('[data-atab="staff"]').style.display = mgr ? 'none' : '';
+  if (mgr && (adminTab === 'leads' || adminTab === 'staff')) adminTab = 'members';
   document.getElementById('adm-members').hidden = adminTab !== 'members';
   document.getElementById('adm-leads').hidden = adminTab !== 'leads';
   document.getElementById('adm-reminders').hidden = adminTab !== 'reminders';
+  document.getElementById('adm-inv').hidden = adminTab !== 'inv';
+  document.getElementById('adm-staff').hidden = adminTab !== 'staff';
+  document.getElementById('adm-reports').hidden = adminTab !== 'reports';
   if (adminTab === 'members') renderAdminMembers();
   if (adminTab === 'leads') renderAdminLeads();
   if (adminTab === 'reminders') renderAdminReminders();
+  if (adminTab === 'inv') renderAdminInv();
+  if (adminTab === 'staff') renderAdminStaff();
+  if (adminTab === 'reports') renderAdminReports();
 };
 const refreshAdmin = () => renderAdmin();
 
@@ -4758,6 +4768,7 @@ const renderAdminReminders = () => {
     if (!m || isAdmin(m)) return;
     const me = currentUser();
     if (btn.dataset.act === 'delmember') {
+      if (!isAdmin(currentUser())) return;
       if (me && me.email === m.email) return;
       if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
       const users = readUsers();
@@ -4839,6 +4850,200 @@ const renderAdminReminders = () => {
     if (!del) return;
     writeLeads(readLeads().filter(l => l.id !== del.dataset.leadDel));
     renderAdminLeads();
+  });
+})();
+
+/* ===========================================================================
+   ADMIN TABS 2 — INVENTORY (#14), STAFF + RBAC (#15), REPORTS (#16).
+   New tabs plug into the existing admin shell + gate.
+   =========================================================================== */
+ONYX.MANAGER_EMAILS = ONYX.MANAGER_EMAILS || [];
+const isManager = user => !!user && Array.isArray(ONYX.MANAGER_EMAILS) &&
+  ONYX.MANAGER_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+
+/* ---------- inventory ---------- */
+const INV_KEY = 'onyx-inventory';
+const readInv = () => {
+  try { return JSON.parse(localStorage.getItem(INV_KEY) || '[]') || []; }
+  catch (err) { return []; }
+};
+const writeInv = v => localStorage.setItem(INV_KEY, JSON.stringify(v));
+const seedInv = () => {
+  if (localStorage.getItem(INV_KEY) !== null) return;
+  writeInv([
+    { id: 'p1', name: 'Whey Protein 1kg', price: 2499, stock: 17, sold: 83, threshold: 10 },
+    { id: 'p2', name: 'Creatine 300g', price: 899, stock: 24, sold: 41, threshold: 8 },
+    { id: 'p3', name: 'ONYX Shaker', price: 349, stock: 40, sold: 112, threshold: 15 },
+    { id: 'p4', name: 'Training Gloves', price: 599, stock: 9, sold: 27, threshold: 10 },
+    { id: 'p5', name: 'ONYX T-Shirt', price: 799, stock: 22, sold: 35, threshold: 10 }
+  ]);
+};
+const renderAdminInv = () => {
+  seedInv();
+  const items = readInv();
+  const units = items.reduce((a, p) => a + (+p.stock || 0), 0);
+  const value = items.reduce((a, p) => a + (+p.stock || 0) * (+p.price || 0), 0);
+  const low = items.filter(p => (+p.stock || 0) <= (+p.threshold || 0)).length;
+  document.getElementById('iv-stats').innerHTML =
+    [[items.length, 'SKUS'], [units, 'UNITS IN STOCK'], [inr(value), 'STOCK VALUE'], [low, 'LOW STOCK']]
+      .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
+  document.getElementById('iv-list').innerHTML = items.length ? items.map(p => {
+    const isLow = (+p.stock || 0) <= (+p.threshold || 0);
+    return `<div class="adm-row${isLow ? ' is-low' : ''}"><strong>${isLow ? '⚠️ ' : ''}${esc(p.name)} · ${inr(p.price)}</strong>` +
+      `<span>STOCK: ${+p.stock || 0} · SOLD: ${+p.sold || 0} · LOW AT: ${+p.threshold || 0}</span>` +
+      `<span class="adm-lead-ctl"><button type="button" data-iv-sell="${p.id}">Sell 1</button><button type="button" data-iv-add="${p.id}">+10 stock</button><button type="button" data-iv-del="${p.id}" aria-label="Delete product">×</button></span></div>`;
+  }).join('') : '<p class="log-empty">No products — add your first above.</p>';
+};
+
+/* ---------- staff + roles ---------- */
+const STAFF_KEY = 'onyx-staff';
+const readStaff = () => {
+  try { return JSON.parse(localStorage.getItem(STAFF_KEY) || '[]') || []; }
+  catch (err) { return []; }
+};
+const writeStaff = v => localStorage.setItem(STAFF_KEY, JSON.stringify(v));
+const trainerLoad = () => {
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  return coachList().map(c => {
+    const clients = members.filter(m => m.assignedCoach === c.email);
+    let sched = 0, done = 0;
+    members.forEach(m => (m.sessions || []).forEach(s => {
+      if (s.coach !== c.email) return;
+      if (s.status === 'done') done++;
+      else if (s.status === 'scheduled' || s.status === 'requested') sched++;
+    }));
+    const value = clients.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+    return { name: c.name, email: c.email, clients: clients.length, sched, done, value };
+  });
+};
+const renderAdminStaff = () => {
+  const staff = readStaff();
+  const load = trainerLoad();
+  document.getElementById('st-list').innerHTML =
+    `<div class="perm-table"><strong>ROLE PERMISSIONS</strong><table>` +
+    `<tr><th>ROLE</th><th>ACCESS</th></tr>` +
+    `<tr><td>Owner</td><td>Everything — all tabs, delete, billing</td></tr>` +
+    `<tr><td>Manager</td><td>Members, reminders, inventory, reports (no delete, no staff)</td></tr>` +
+    `<tr><td>Trainer</td><td>Own clients, programs, diet, sessions (trainer dashboard)</td></tr>` +
+    `<tr><td>Receptionist</td><td>Front-desk check-in via staff PIN (no login needed)</td></tr></table></div>` +
+    (load.length ? `<div class="perm-table"><strong>TRAINER LOAD (LIVE)</strong><table><tr><th>COACH</th><th>CLIENTS</th><th>SESSIONS</th><th>CLIENT VALUE</th></tr>` +
+      load.map(t => `<tr><td>${esc(t.name)}</td><td>${t.clients}</td><td>${t.done} done · ${t.sched} upcoming</td><td>${inr(t.value)}</td></tr>`).join('') + `</table></div>` : '') +
+    (staff.length ? staff.map(s => {
+      const today = (s.days || []).includes(dayKey());
+      return `<div class="adm-row"><strong>${esc(s.name)} · ${esc((s.role || '').toUpperCase())}${today ? ' · ✅ PRESENT' : ''}</strong>` +
+        `<span>${esc(s.phone || 'no phone')} · ${inr(s.salary || 0)}/MO · ${esc(s.hours || 'hours?')} · ${(s.days || []).length} DAYS PRESENT</span>` +
+        `<span class="adm-lead-ctl"><button type="button" data-st-day="${s.id}">${today ? 'Unmark today' : 'Mark present'}</button><button type="button" data-st-del="${s.id}" aria-label="Remove staff">×</button></span></div>`;
+    }).join('') : '<p class="log-empty">No staff records — add trainers, receptionists, managers above.</p>');
+};
+
+/* ---------- reports ---------- */
+const rpBars = pairs => {
+  const max = Math.max(1, ...pairs.map(([, v]) => v));
+  return `<div class="rp-bars">` + pairs.map(([label, v, disp]) =>
+    `<div><span>${esc(label)}</span><span class="ch-bar"><i style="width:${Math.round((v / max) * 100)}%"></i></span><b>${esc(disp !== undefined ? disp : String(v))}</b></div>`
+  ).join('') + `</div>`;
+};
+const renderAdminReports = () => {
+  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const active = members.filter(memberActive);
+  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+  const planCounts = {};
+  active.forEach(m => { planCounts[m.plan] = (planCounts[m.plan] || 0) + 1; });
+  const popular = Object.entries(planCounts).sort((a, b) => b[1] - a[1])[0];
+  const withBoth = members.filter(m => m.createdAt && m.expiresAt);
+  const avgDur = withBoth.length ? Math.round(withBoth.reduce((a, m) => a + (new Date(m.expiresAt) - new Date(m.createdAt)) / 86400000, 0) / withBoth.length) : 0;
+  const expired = members.filter(m => m.plan && !memberActive(m)).length;
+  const churn = (active.length + expired) ? Math.round((expired / (active.length + expired)) * 100) : 0;
+  document.getElementById('rp-revenue').innerHTML = `<strong>REVENUE & MEMBERSHIP</strong>` +
+    `<p class="csub">ACTIVE REVENUE ${inr(revenue)} · AVG MEMBERSHIP ${avgDur} DAYS · CHURN ${churn}% · MOST POPULAR: ${popular ? esc(popular[0]) + ` (${popular[1]})` : '—'}</p>` +
+    rpBars(Object.entries(planCounts).map(([plan, n]) => [plan, n * (PLAN_PRICES[plan] || 0), `${n} × ${inr(PLAN_PRICES[plan] || 0)}`])) +
+    `<p class="csub">FULL DAILY/WEEKLY/MONTHLY HISTORY NEEDS BACKEND BILLING — THIS IS LIVE PLAN VALUE.</p>`;
+  const hours = Array(24).fill(0);
+  const wdays = Array(7).fill(0);
+  let total = 0, month = 0;
+  const mk = dayKey().slice(0, 7);
+  members.forEach(m => (m.visits || []).forEach(v => {
+    const d = new Date(v.at);
+    if (Number.isNaN(d)) return;
+    total++;
+    if (String(v.at).slice(0, 7) === mk) month++;
+    hours[d.getHours()]++;
+    wdays[d.getDay()]++;
+  }));
+  const wdNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  document.getElementById('rp-attendance').innerHTML = `<strong>ATTENDANCE</strong>` +
+    `<p class="csub">${total} TOTAL VISITS · ${month} THIS MONTH</p>` +
+    `<p class="csub">PEAK HOURS</p>` + rpBars(hours.map((v, h) => [`${h}:00`, v]).filter(([, v], h) => v > 0 || (h >= 5 && h <= 22)).filter((_, i, a) => a.length <= 24)) +
+    `<p class="csub">ACTIVE DAYS</p>` + rpBars(wdays.map((v, i) => [wdNames[i], v]));
+  const load = trainerLoad();
+  document.getElementById('rp-trainers').innerHTML = `<strong>TRAINERS</strong>` + (load.length
+    ? rpBars(load.map(t => [t.name, t.clients, `${t.clients} clients · ${t.done + t.sched} sessions`]))
+    : '<p class="log-empty">No coaches on this device yet.</p>');
+};
+
+/* ---------- tab-2 events (bound once) ---------- */
+(() => {
+  const main = document.getElementById('admin-main');
+  if (!main) return;
+  document.getElementById('iv-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 60);
+    const price = parseFloat(form.elements.price.value);
+    const stock = parseInt(form.elements.stock.value, 10);
+    const threshold = parseInt(form.elements.threshold.value, 10);
+    if (!name || !(price >= 0) || !(stock >= 0)) return;
+    const items = readInv();
+    items.push({ id: 'p' + Date.now().toString(36), name, price, stock, sold: 0, threshold: threshold >= 0 ? threshold : 5 });
+    writeInv(items);
+    form.reset();
+    renderAdminInv();
+  });
+  document.getElementById('iv-list').addEventListener('click', event => {
+    const sell = event.target.closest('[data-iv-sell]');
+    const add = event.target.closest('[data-iv-add]');
+    const del = event.target.closest('[data-iv-del]');
+    if (!sell && !add && !del) return;
+    const items = readInv();
+    const id = (sell || add || del).dataset.ivSell || (sell || add || del).dataset.ivAdd || (sell || add || del).dataset.ivDel;
+    const p = items.find(x => x.id === id);
+    if (del) { writeInv(items.filter(x => x.id !== id)); renderAdminInv(); return; }
+    if (!p) return;
+    if (sell && (+p.stock || 0) > 0) { p.stock--; p.sold = (+p.sold || 0) + 1; }
+    if (add) p.stock = (+p.stock || 0) + 10;
+    writeInv(items);
+    renderAdminInv();
+  });
+  document.getElementById('st-add').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    if (name.length < 2) return;
+    const staff = readStaff();
+    staff.push({
+      id: 's' + Date.now().toString(36), name, role: form.elements.role.value,
+      phone: form.elements.phone.value.trim().slice(0, 13),
+      salary: parseFloat(form.elements.salary.value) || 0,
+      hours: form.elements.hours.value.trim().slice(0, 30) || '9–5', days: []
+    });
+    writeStaff(staff);
+    form.reset();
+    renderAdminStaff();
+  });
+  document.getElementById('st-list').addEventListener('click', event => {
+    const day = event.target.closest('[data-st-day]');
+    const del = event.target.closest('[data-st-del]');
+    if (!day && !del) return;
+    const staff = readStaff();
+    const id = (day || del).dataset.stDay || (day || del).dataset.stDel;
+    if (del) { writeStaff(staff.filter(x => x.id !== id)); renderAdminStaff(); return; }
+    const s = staff.find(x => x.id === id);
+    if (!s) return;
+    s.days = s.days || [];
+    const k = dayKey();
+    s.days = s.days.includes(k) ? s.days.filter(d => d !== k) : [...s.days, k];
+    writeStaff(staff);
+    renderAdminStaff();
   });
 })();
 
