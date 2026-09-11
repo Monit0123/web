@@ -903,6 +903,7 @@ const updateAuthLinks = () => {
 const renderProfile = () => {
   if (!document.body.classList.contains('profile-page')) return;
   const gate = document.getElementById('profile-gate');
+  if (!gate) return;
   const view = document.getElementById('profile-view');
   const empty = document.getElementById('profile-empty');
   const training = document.getElementById('profile-training');

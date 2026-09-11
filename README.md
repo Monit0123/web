@@ -78,7 +78,7 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
 - **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=39`. Bump that
+- **Cache busting.** Stylesheet and script are linked as `?v=40`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
