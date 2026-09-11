@@ -1092,7 +1092,7 @@ const normalizeDash = user => {
   ensure('goals', []); ensure('customPrograms', []); ensure('workoutDone', {});
   ensure('threads', {}); ensure('coachPrograms', []); ensure('coachNotes', []);
   ensure('prs', []); ensure('measurements', []); ensure('sessions', []);
-  ensure('memberReadAt', {}); ensure('coachReadAt', {}); ensure('foodLog', {});
+  ensure('memberReadAt', {}); ensure('coachReadAt', {}); ensure('foodLog', {}); ensure('aiChat', []);
   if (user.assignedCoach === undefined) { user.assignedCoach = null; changed = true; }
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
   if (!user.visits) {
@@ -3428,6 +3428,368 @@ const clientDietHTML = m => {
     document.getElementById('diet-pro').value = Math.round(sum.p) || '';
     document.getElementById('diet-carb').value = Math.round(sum.c) || '';
     document.getElementById('diet-fat').value = Math.round(sum.f) || '';
+  });
+})();
+
+/* ===========================================================================
+   AI FITNESS ASSISTANT — on-device smart coach for members.
+   Reads the member's real data (program, diet, tracker, measurements, streak)
+   and answers training / nutrition / recovery questions instantly, offline.
+   Set ONYX.AI_ENDPOINT to a POST JSON endpoint ({message, context} -> {reply})
+   to upgrade answers to a cloud LLM; the local brain stays as instant fallback.
+   The assistant NEVER replaces a qualified trainer or doctor — the disclaimer
+   is baked into the UI and every medical-adjacent answer.
+   =========================================================================== */
+ONYX.AI_ENDPOINT = ONYX.AI_ENDPOINT || '';
+const AI_SAFETY = 'I\u2019m an AI guide, not your trainer — and never a doctor. For injuries, medical conditions, or clinical nutrition needs, please talk to a qualified professional (or your ONYX coach).';
+let lastAIWorkout = null;
+
+const aiCoachName = user => {
+  if (!user.assignedCoach) return null;
+  const users = readUsers();
+  return (users[user.assignedCoach] && users[user.assignedCoach].name) || null;
+};
+const aiTodaySession = user => {
+  if (!user.plan) return { none: true };
+  const t = todaysSession(user);
+  if (!t) return { none: true };
+  if (t.rest) return { rest: true };
+  return { session: t.session, program: t.program, done: !!(user.workoutDone && user.workoutDone[dayKey()]) };
+};
+const aiWeightTrend = user => {
+  const ws = (user.measurements || []).filter(m => +m.weight > 0).slice(-4);
+  if (ws.length < 2) return null;
+  const first = +ws[0].weight, last = +ws[ws.length - 1].weight;
+  return { from: first, to: last, delta: +(last - first).toFixed(1), n: ws.length };
+};
+const aiWeekAdherence = user => {
+  const keys = Object.keys(user.foodLog || {}).sort().slice(-7);
+  const tg = getDietTargets(user);
+  if (!keys.length) return null;
+  const days = keys.map(k => (user.foodLog[k] || []).reduce((a, e) => a + (+e.kcal || 0), 0));
+  const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+  return { days: days.length, avg, target: tg.kcal };
+};
+const aiRecentWorkouts = (user, n = 14) => {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const k = dayKey(d);
+    if (user.workoutDone && user.workoutDone[k]) out.push(k);
+  }
+  return out;
+};
+
+/* ---------- intent answers (all user data escaped) ---------- */
+const aiMedical = () =>
+  `<p><strong>I'd rather be safe than helpful here.</strong> Pain, injuries, dizziness, blood pressure, diabetes, thyroid, pregnancy, medication — anything medical — is outside what I can advise on.</p><p>${AI_SAFETY}</p><p>If it hurts sharply, swells, or doesn't ease in a few days, stop training that area and get it checked before your next session.</p>`;
+
+const aiGreeting = user => {
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const stats = attendanceStats(user);
+  const train = t.session ? `Today is <strong>${esc(t.session.focus)}</strong> (${esc(t.session.items.length)} exercises)${t.done ? ' — already crushed ✓' : ''}.` : t.rest ? 'Today is a <strong>rest day</strong> — walk, stretch, sleep.' : 'No program yet — finish your assessment or start one from the library.';
+  return `<p>Namaste, <strong>${esc(user.name.split(' ')[0])}</strong> ✦ ${train}</p><p>Fuel: <strong>${fmtNum(ate.kcal)} / ${fmtNum(tg.kcal)} kcal</strong> so far · Streak: <strong>${stats.streak} days</strong>. Ask me about training, food, or recovery — e.g. "create a 45-min push workout".</p><p class="ai-fine">${AI_SAFETY}</p>`;
+};
+
+const aiPostWorkout = user => {
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const pLeft = Math.max(0, Math.round(tg.p - ate.p));
+  const whey = foodByName('Whey protein');
+  const banana = foodByName('Banana');
+  const w = whey ? scaleFood(whey, 30) : null;
+  const b = banana ? scaleFood(banana, 120) : null;
+  const trained = t.session ? `after <strong>${esc(t.session.focus)}</strong>` : 'after training';
+  return `<p>After training ${trained}, aim for <strong>30–50g protein + some carbs within 2 hours</strong> — protein rebuilds, carbs refill.</p><p>Easy combo: whey scoop (30g ≈ ${w ? `${w.kcal} kcal · P${w.p}` : '120 kcal · P24'}) + banana (≈ ${b ? `${b.kcal} kcal` : '105 kcal'}). Whole-food option: 4 eggs + 2 roti + curd.</p><p>You still have <strong>${fmtNum(pLeft)}g protein</strong> left in today's budget — log it in the tracker so I can keep count. <span class="ai-fine">General guidance; your coach fine-tunes portions to you.</span></p>`;
+};
+
+const aiMissed = user => {
+  const ap = user.activeProgram;
+  const coach = aiCoachName(user);
+  let chestDay = null;
+  if (ap && ap.week) chestDay = ap.week.find(d => /chest|push/i.test(d.focus || ''));
+  const recent = aiRecentWorkouts(user, 7).length;
+  return `<p>One missed session changes nothing — <strong>don't double up to "punish" yourself.</strong> Here's the fix:</p><ul><li><strong>Best:</strong> do ${chestDay ? `<strong>${esc(chestDay.label)} (${esc(chestDay.focus)})</strong>` : 'that session'} on your next rest day, then continue the week as written.</li><li><strong>Busy week?</strong> Merge: add 2 chest moves (bench + fly) to your next push/upper day.</li><li><strong>Missed 2+ weeks?</strong> Restart the current week fresh instead of cramming.</li></ul><p>You trained <strong>${recent} day${recent === 1 ? '' : 's'}</strong> this week — protect the streak, not the guilt.${coach ? ` Your coach <strong>${esc(coach)}</strong> can reshuffle your week in one message.` : ''}</p>`;
+};
+
+const aiPlateau = user => {
+  const trend = aiWeightTrend(user);
+  const adh = aiWeekAdherence(user);
+  const recent = aiRecentWorkouts(user, 14).length;
+  const tg = getDietTargets(user);
+  const goal = user.profile ? user.profile.goal : null;
+  let line1 = 'I need more data to diagnose you properly — log weight in Measurements and food in the tracker for a week.';
+  if (trend) {
+    const dir = trend.delta > 0 ? 'up' : trend.delta < 0 ? 'down' : 'flat';
+    line1 = `Your last ${trend.n} weigh-ins went <strong>${trend.from} → ${trend.to} kg (${dir})</strong>.`;
+  }
+  let line2 = 'No food logs this week — most "stuck" phases are untracked snacking, not a broken metabolism.';
+  if (adh) {
+    const diff = adh.avg - adh.target;
+    line2 = `You averaged <strong>${fmtNum(adh.avg)} kcal</strong> over ${adh.days} logged day${adh.days === 1 ? '' : 's'} vs a ${fmtNum(adh.target)} target (${diff > 0 ? '+' : ''}${fmtNum(diff)}). ${goal === 'lose' && diff > -100 ? 'For fat loss that gap is too small — tighten portions or add a walk.' : 'Consistency beats perfection — keep logging.'}`;
+  }
+  return `<p>${line1}</p><p>${line2}</p><ul><li><strong>Training:</strong> ${recent} sessions in 14 days — progressive overload + steps matter as much as diet.</li><li><strong>Weigh right:</strong> same time, morning, after bathroom; compare weekly averages, not days.</li><li><strong>Stuck 3+ weeks?</strong> That's when a coach earns their fee — ${aiCoachName(user) ? `ask <strong>${esc(aiCoachName(user))}</strong> to review this data.` : 'ask a coach to review your plan.'}</li></ul>`;
+};
+
+const aiProtein = user => {
+  const w = user.profile && +user.profile.weight;
+  const goal = user.profile ? user.profile.goal : null;
+  const tg = getDietTargets(user);
+  const perKg = goal === 'lose' ? '2.0–2.2' : goal === 'build' ? '1.8–2.2' : '1.6–2.0';
+  const range = w ? ` — that's <strong>${Math.round(w * parseFloat(perKg))}–${Math.round(w * (parseFloat(perKg) + 0.2))}g</strong> at your ${w} kg` : '';
+  return `<p>Aim for <strong>${perKg}g protein per kg bodyweight</strong>${range}. Your plan targets <strong>${fmtNum(tg.p)}g/day</strong>.</p><p>Spread it over 3–4 meals (30–50g each absorbs best): eggs, paneer, chicken, dal + curd, whey on training days. Ask me <em>"protein in paneer"</em> for any food's numbers.</p>`;
+};
+
+const aiFoodQuery = (user, foodName, grams) => {
+  const clean = foodName.replace(/^(how many|how much|whats|what s|what is|tell me about|tell me|give me|a|an|the)\b\s*/, '').trim();
+  if (clean.length < 2) return `<p>Ask me like <em>"protein in eggs"</em> or <em>"calories in 150g chicken"</em> and I'll pull the numbers from my food database.</p>`;
+  const hits = searchFoods(clean);
+  if (!hits.length) return `<p>I couldn't find "<strong>${esc(foodName)}</strong>" in my 126-food database. Try a simpler name — <em>paneer, roti, whey, banana</em>.</p>`;
+  const f = hits[0];
+  const g = grams || f[6] || 100;
+  const s = scaleFood(f, g);
+  return `<p><strong>${esc(f[0])}</strong> — per 100g: <strong>${f[1]} kcal · P${f[2]} C${f[3]} F${f[4]}</strong>.</p><p>${fmtNum(g)}g (${esc(f[5])} ≈ ${f[6]}g) = <strong>${fmtNum(s.kcal)} kcal · P${s.p} C${s.c} F${s.f}</strong>. Log it from the Diet tab's food search to count it today.</p>`;
+};
+
+const aiTargets = user => {
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const custom = !!(user.customDiet && user.customDiet.calories);
+  return `<p>Your daily targets${custom ? ` (set by your coach)` : ' (from your assessment)'}:</p><ul><li><strong>${fmtNum(tg.kcal)} kcal</strong> — eaten ${fmtNum(ate.kcal)}, ${fmtNum(Math.max(0, tg.kcal - ate.kcal))} left</li><li><strong>Protein ${fmtNum(tg.p)}g</strong> · <strong>Carbs ${fmtNum(tg.c)}g</strong> · <strong>Fat ${fmtNum(tg.f)}g</strong></li><li>Water: 3–4 litres, more on training days</li></ul>`;
+};
+
+const aiToday = user => {
+  const t = aiTodaySession(user);
+  if (t.session) return `<p>Today: <strong>${esc(t.session.focus)}</strong> — ${esc(t.session.label)} · ${esc(String(t.program))}${t.done ? ' ✓ done' : ''}.</p><ul>${t.session.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p>Warm up 5 minutes, rest 60–120s between sets. Mark it done on the Today tab when you finish.</p>`;
+  if (t.rest) return `<p>Today is a <strong>rest day</strong> — the gym floor is closed on Sundays. Walk 20–30 min, stretch hips + shoulders, sleep early. Growth happens between sessions.</p>`;
+  return `<p>No program on your account yet — finish the assessment or start any program from the library, and I'll brief you daily.</p>`;
+};
+
+const aiStreak = user => {
+  const stats = attendanceStats(user);
+  const recent = aiRecentWorkouts(user, 14).length;
+  return `<p>You're on a <strong>${stats.streak}-day streak</strong> (best: ${stats.best}) · <strong>${stats.total} visits</strong> logged · ${stats.monthDays} this month.</p><p>Workouts completed in the last 14 days: <strong>${recent}</strong>. ${stats.streak >= 7 ? 'That consistency is the whole game — protect it.' : 'Two sessions this week and the streak starts compounding.'}</p>`;
+};
+
+const aiPRs = user => {
+  const prs = (user.prs || []).slice(-5).reverse();
+  if (!prs.length) return `<p>No PRs logged yet — tell your coach (or log one) the next time you hit a big lift, and I'll track your strongest numbers here.</p>`;
+  return `<p>Your latest PRs:</p><ul>${prs.map(r => `<li><strong>${esc(r.lift)} — ${esc(String(r.weight))}kg</strong> · ${esc(fmtDate(r.date))}</li>`).join('')}</ul><p>Test a true max every 8–12 weeks, not every week — and always with a spotter or coach watching.</p>`;
+};
+
+const aiCoach = user => {
+  const coach = aiCoachName(user);
+  return coach
+    ? `<p>Your coach is <strong>${esc(coach)}</strong> — for program changes, injuries, or anything personal, they're the human to ask.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-coach">Open Coach Corner →</button></p>`
+    : `<p>No coach assigned yet — I can handle general guidance, but a human coach is worth it for personal programming. Ask at the front desk or message us and we'll match you.</p><p><button type="button" class="ai-goto" data-open-contact>Message the team →</button></p>`;
+};
+
+const aiWater = () => `<p>Target <strong>3–4 litres a day</strong>, +500–750ml per hour of training. Practical rule: carry the bottle, sip between sets, and check your urine — pale yellow means you're on track.</p>`;
+const aiRecovery = () => `<p>Sore, not sharp? That's DOMS — it peaks at 24–48h. Move gently (walk, light cycle), sleep 7–9 hours, eat your protein.</p><p><strong>Sharp, one-sided, or joint pain is different</strong> — stop training it and see a professional. ${AI_SAFETY}</p>`;
+const aiThanks = user => `<p>Anytime, <strong>${esc(user.name.split(' ')[0])}</strong> — now go earn the streak. 💪</p>`;
+const aiWho = () => `<p>I'm the <strong>ONYX AI assistant (beta)</strong> — I read your program, diet, tracker, and progress to answer personally. I can brief today's workout, build sessions, look up any food, and diagnose plateaus.</p><p class="ai-fine">${AI_SAFETY}</p>`;
+const aiFallback = () => `<p>I can help with <strong>training</strong> ("create a 45-min push workout"), <strong>food</strong> ("protein in eggs", "what to eat after workout"), and <strong>progress</strong> ("why is my weight stuck", "my streak").</p><p>Try one — or ask your coach for anything personal.</p>`;
+
+/* ---------- workout generator ---------- */
+const AI_EX = {
+  push: [['Barbell Bench Press', 4, '6–8'], ['Overhead Press', 4, '6–8'], ['Incline Dumbbell Press', 3, '8–10'], ['Dips', 3, '8–12'], ['Lateral Raises', 3, '12–15'], ['Cable Chest Fly', 3, '10–12'], ['Tricep Pushdown', 3, '10–12'], ['Overhead Extension', 3, '10–12']],
+  pull: [['Deadlift', 4, '5'], ['Pull-ups / Lat Pulldown', 4, '6–10'], ['Barbell Row', 4, '6–8'], ['Seated Cable Row', 3, '8–10'], ['Face Pulls', 3, '12–15'], ['Barbell Curl', 3, '8–10'], ['Hammer Curl', 3, '10–12'], ['Shrugs', 3, '12–15']],
+  legs: [['Back Squat', 4, '6–8'], ['Romanian Deadlift', 4, '8–10'], ['Leg Press', 3, '10–12'], ['Walking Lunges', 3, '12/leg'], ['Lying Leg Curl', 3, '10–12'], ['Hip Thrust', 3, '10–12'], ['Standing Calf Raise', 4, '12–15'], ['Bulgarian Split Squat', 3, '8/leg']],
+  chest: [['Barbell Bench Press', 4, '6–8'], ['Incline Dumbbell Press', 4, '8–10'], ['Dips', 3, '8–12'], ['Cable Chest Fly', 3, '10–12'], ['Push-ups', 3, 'max'], ['Decline Press', 3, '8–10']],
+  back: [['Deadlift', 4, '5'], ['Pull-ups / Lat Pulldown', 4, '6–10'], ['Barbell Row', 4, '6–8'], ['Seated Cable Row', 3, '8–10'], ['Straight-arm Pulldown', 3, '10–12'], ['Hyperextension', 3, '12–15']],
+  shoulders: [['Overhead Press', 4, '6–8'], ['Arnold Press', 3, '8–10'], ['Lateral Raises', 4, '12–15'], ['Rear-delt Fly', 3, '12–15'], ['Face Pulls', 3, '12–15'], ['Shrugs', 3, '12–15']],
+  arms: [['Barbell Curl', 4, '8–10'], ['Tricep Pushdown', 4, '8–10'], ['Hammer Curl', 3, '10–12'], ['Overhead Extension', 3, '10–12'], ['Preacher Curl', 3, '10–12'], ['Dips', 3, '8–12']],
+  core: [['Hanging Knee Raise', 3, '12–15'], ['Cable Crunch', 3, '12–15'], ['Plank', 3, '45–60s'], ['Russian Twist', 3, '20'], ['Ab Wheel', 3, '8–10'], ['Side Plank', 3, '30s/side']],
+  full: [['Back Squat', 4, '6–8'], ['Barbell Bench Press', 4, '6–8'], ['Barbell Row', 4, '6–8'], ['Overhead Press', 3, '8–10'], ['Romanian Deadlift', 3, '8–10'], ['Pull-ups / Lat Pulldown', 3, '6–10'], ['Plank', 3, '45–60s']],
+  upper: [['Barbell Bench Press', 4, '6–8'], ['Barbell Row', 4, '6–8'], ['Overhead Press', 3, '8–10'], ['Pull-ups / Lat Pulldown', 3, '6–10'], ['Lateral Raises', 3, '12–15'], ['Barbell Curl', 3, '8–10'], ['Tricep Pushdown', 3, '10–12']],
+  lower: [['Back Squat', 4, '6–8'], ['Romanian Deadlift', 4, '8–10'], ['Leg Press', 3, '10–12'], ['Walking Lunges', 3, '12/leg'], ['Lying Leg Curl', 3, '10–12'], ['Standing Calf Raise', 4, '12–15']],
+  hiit: [['Kettlebell Swings', 5, '40s on/20s off'], ['Box Jumps', 5, '40s on/20s off'], ['Battle Ropes', 5, '30s on/30s off'], ['Burpees', 4, '40s on/20s off'], ['Rowing Sprint', 4, '250m'], ['Mountain Climbers', 4, '40s on/20s off']]
+};
+const aiDetectFocus = q => {
+  if (/\bpush\b|chest|bench/.test(q)) return /back|pull/.test(q) ? 'upper' : /\bpush\b/.test(q) && !/chest/.test(q) ? 'push' : 'chest';
+  if (/\bpull\b|back\b|bicep|lat\b/.test(q)) return 'pull';
+  if (/\bleg\b|legs|squat|glute|quad|hamstring|calf|calves/.test(q)) return 'legs';
+  if (/shoulder|delt/.test(q)) return 'shoulders';
+  if (/\barm\b|arms|tricep/.test(q)) return 'arms';
+  if (/core|abs|ab |six.pack/.test(q)) return 'core';
+  if (/full.body|fullbody|full body/.test(q)) return 'full';
+  if (/upper/.test(q)) return 'upper';
+  if (/lower/.test(q)) return 'lower';
+  if (/hiit|cardio|condition|fat.burn|metcon/.test(q)) return 'hiit';
+  return 'full';
+};
+const aiDetectMinutes = q => {
+  const m = q.match(/(\d{2,3})\s*(?:min|m\b)/);
+  if (m) return Math.min(90, Math.max(20, parseInt(m[1], 10)));
+  if (/quick|short|busy/.test(q)) return 30;
+  return 45;
+};
+const aiGenerate = (user, q) => {
+  const focus = aiDetectFocus(q);
+  const mins = aiDetectMinutes(q);
+  const pool = AI_EX[focus] || AI_EX.full;
+  const count = mins <= 32 ? 5 : mins <= 52 ? 6 : Math.min(pool.length, 8);
+  const items = [`Warm-up — 5 min bike/row + arm circles + leg swings`, ...pool.slice(0, count).map(([n, s, r]) => `${n} — ${s} × ${r} (rest ${focus === 'hiit' ? 'as written' : s >= 4 ? '2–3 min' : '60–90s'})`), `Cool-down — 5 min easy cardio + full-body stretch`];
+  const label = `${mins}-Min ${focus.charAt(0).toUpperCase() + focus.slice(1)}`;
+  lastAIWorkout = { name: `${label} — AI Built`, focus: label, items };
+  return `<p>Here's your <strong>${label} workout</strong> (~${mins} min):</p><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p><button type="button" class="ai-goto" data-ai-save>Save to my programs →</button></p><p class="ai-fine">New to these lifts? Ask a coach to check your form on the big compounds first.</p>`;
+};
+
+/* ---------- router ---------- */
+const aiLocalReply = (text, user) => {
+  const q = ` ${String(text || '').toLowerCase()} `;
+  if (/\b(pain|hurts?|injur|doctor|diabet|thyroid|blood pressure|\bbp\b|pregnan|medic|dizz|joint|tear|sprain|surgery|depress|anxiet|eating disorder|steroid|chest pain|doctor)\b/.test(q)) return aiMedical();
+  if (/^(hi|hii+|hey|hello|yo|namaste|good (morning|afternoon|evening))\b/.test(q.trim())) return aiGreeting(user);
+  if (/who are you|what can you/.test(q)) return aiWho();
+  if (/(after|post)[-\s]?workout|what.*eat.*(after|train)/.test(q)) return aiPostWorkout(user);
+  const qc = q.replace(/\d+\s*g\b/g, ' ');
+  const fm = qc.match(/(?:calories|kcal|protein|carbs|fat|macros?|nutrition)\s+(?:are\s+)?(?:in|of)\s+([a-z][a-z\s\/\-.()]*)/)
+    || qc.match(/([a-z][a-z\s\/\-.()]*?)\s+(?:calories|kcal|nutrition|macros?)\b/)
+    || qc.match(/(?:protein|carbs|fat|calories|kcal)\s+does\s+([a-z][a-z\s\/\-.()]*?)(?:\s+have)?\s*$/);
+  if (fm) {
+    const gm = q.match(/(\d+)\s*g\b/);
+    return aiFoodQuery(user, fm[1].trim().replace(/\s+/g, ' '), gm ? parseInt(gm[1], 10) : null);
+  }
+  if (/(\bmiss(ed|ing)?|skipped|behind|couldn.?t (train|workout|go|make)|catch up|stop(ped)? (going|training))\b/.test(q) && !/rope|jump/.test(q)) return aiMissed(user);
+  if (/\bskipped?\b.*(day|workout|session|gym|chest|leg|push|pull)/.test(q)) return aiMissed(user);
+  if (/plateau|stuck|not losing|not gaining|weigh the same|no progress|scale (wont|won't|isnt|isn't|not|stuck)|stop(ped|s)?/.test(q) && /weight|los|gain|diet|fat|kg|scale|stuck|plateau|progress|eating|deficit/.test(q)) return aiPlateau(user);
+  if (/(diet|meal|food).{0,20}(plan|chart|suggest|idea|make|create)/.test(q)) return `<p>Your current targets: <strong>${fmtNum(getDietTargets(user).kcal)} kcal · P${fmtNum(getDietTargets(user).p)} C${fmtNum(getDietTargets(user).c)} F${fmtNum(getDietTargets(user).f)}</strong> — full plan's on your Diet tab.</p><p>Want changes? ${aiCoachName(user) ? `Message <strong>${esc(aiCoachName(user))}</strong> — they can rewrite your plan in minutes.` : 'A coach can build you a custom plan — ask at the front desk.'} Meanwhile, ask me <em>"protein in eggs"</em> for any food's numbers.</p>`;
+  if (/(create|make|generate|give|build|design|write).{0,30}(workout|session|training|exercise|routine|plan)|((push|pull|leg|chest|back|shoulder|arm|full.body|upper|lower|hiit|core)\s*(day|workout|session|routine))/.test(q)) return aiGenerate(user, q);
+  if (/protein/.test(q)) return aiProtein(user);
+  if (/calor|macros?\b|my target/.test(q)) return aiTargets(user);
+  if (/today.*(workout|train|session|exercise)|what.*(train|workout).*today|my workout\b/.test(q)) return aiToday(user);
+  if (/streak|attendance|check.?in|how many.*workout|workouts.*(done|last)|my progress/.test(q)) return aiStreak(user);
+  if (/\bprs?\b|personal record|max lift|strongest|1rm/.test(q)) return aiPRs(user);
+  if (/coach|trainer|human|expert|call me|contact|support/.test(q)) return aiCoach(user);
+  if (/water|hydrat|drink/.test(q)) return aiWater();
+  if (/sleep|sore|recover|tired|fatigue|doms|rest\b/.test(q)) return aiRecovery();
+  if (/thank|great|awesome|nice|bye|perfect/.test(q)) return aiThanks(user);
+  return aiFallback();
+};
+
+/* ---------- cloud endpoint seam (optional upgrade) ---------- */
+const aiViaEndpoint = async (user, text) => {
+  const url = ONYX.AI_ENDPOINT;
+  if (!url) return null;
+  const t = aiTodaySession(user);
+  const tg = getDietTargets(user);
+  const ate = dayIntake(user);
+  const context = {
+    name: user.name, goal: user.profile ? user.profile.goal : null,
+    weightKg: user.profile ? user.profile.weight : null, targetKg: user.profile ? user.profile.target : null,
+    program: user.activeProgram ? user.activeProgram.name : null,
+    todayWorkout: t.session ? `${t.session.label}: ${t.session.focus} (${t.session.items.length} exercises)` : t.rest ? 'Rest day' : 'No program',
+    targets: tg, eatenToday: { kcal: Math.round(ate.kcal), p: +ate.p.toFixed(1), c: +ate.c.toFixed(1), f: +ate.f.toFixed(1) },
+    streak: calcStreak(user.checkins), visits: (user.visits || []).length,
+    recentWeights: (user.measurements || []).filter(m => +m.weight > 0).slice(-4).map(m => m.weight),
+    prs: (user.prs || []).slice(-5), coach: aiCoachName(user)
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: String(text).slice(0, 500), context }), signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.reply ? String(data.reply) : null;
+  } catch (err) { clearTimeout(timer); return null; }
+};
+
+/* ---------- chat UI (bound once) ---------- */
+(() => {
+  const fab = document.getElementById('ai-fab');
+  if (!fab) return;
+  const dialog = document.getElementById('ai-dialog');
+  const msgs = document.getElementById('ai-msgs');
+  const chips = document.getElementById('ai-chips');
+  const form = document.getElementById('ai-form');
+  const input = document.getElementById('ai-input');
+  const QUICK = ['What should I eat after my workout?', 'I missed chest day — what now?', 'Why is my weight stuck?', 'Create a 45-min push workout', 'How much protein do I need?'];
+  let booted = false;
+  const scrollDown = () => { msgs.scrollTop = msgs.scrollHeight; };
+  const pushHist = (role, html) => {
+    const user = currentUser();
+    if (!user) return;
+    user.aiChat = user.aiChat || [];
+    user.aiChat.push({ r: role, h: String(html).slice(0, 4000) });
+    if (user.aiChat.length > 30) user.aiChat = user.aiChat.slice(-30);
+    saveCurrentUser(user);
+  };
+  const bubble = (role, html, save = true) => {
+    const div = document.createElement('div');
+    div.className = `ai-msg ${role}`;
+    div.innerHTML = html;
+    msgs.appendChild(div);
+    scrollDown();
+    if (save) pushHist(role, html);
+    return div;
+  };
+  const boot = () => {
+    if (booted) return;
+    booted = true;
+    chips.innerHTML = QUICK.map(q => `<button type="button" data-ai-chip="${esc(q)}">${esc(q)}</button>`).join('');
+    const user = currentUser();
+    if (!user) {
+      bubble('bot', `<p>Namaste ✦ I'm the ONYX AI coach — I read your program, diet, and progress to answer personally.</p><p><button type="button" class="ai-goto" data-ai-login>Log in to start →</button></p>`, false);
+      return;
+    }
+    (user.aiChat || []).forEach(m => bubble(m.r === 'u' ? 'user' : 'bot', m.h, false));
+    if (!(user.aiChat || []).length) bubble('bot', aiGreeting(user));
+  };
+  const send = async text => {
+    const clean = String(text || '').trim().slice(0, 300);
+    if (!clean) return;
+    const user = currentUser();
+    if (!user) { openAuth('Log in to chat with your AI coach.'); return; }
+    bubble('user', esc(clean));
+    input.value = '';
+    const typing = document.createElement('div');
+    typing.className = 'ai-msg bot ai-typing';
+    typing.innerHTML = '<span></span><span></span><span></span>';
+    msgs.appendChild(typing);
+    scrollDown();
+    let reply = await aiViaEndpoint(user, clean);
+    if (reply) reply = `<p>${esc(reply).replace(/\n/g, '<br />')}</p>`;
+    else {
+      await new Promise(r => setTimeout(r, 450 + Math.min(600, clean.length * 8)));
+      reply = aiLocalReply(clean, user);
+    }
+    typing.remove();
+    bubble('bot', reply);
+  };
+  fab.addEventListener('click', () => { boot(); dialog.showModal(); setTimeout(() => input.focus(), 50); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  form.addEventListener('submit', event => { event.preventDefault(); send(input.value); });
+  chips.addEventListener('click', event => {
+    const btn = event.target.closest('[data-ai-chip]');
+    if (btn) send(btn.dataset.aiChip);
+  });
+  msgs.addEventListener('click', event => {
+    if (event.target.closest('[data-ai-login]')) { dialog.close(); openAuth('Log in to chat with your AI coach.'); return; }
+    const go = event.target.closest('[data-ai-goto]');
+    if (go) {
+      dialog.close();
+      const el = document.getElementById(go.dataset.aiGoto);
+      if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+      return;
+    }
+    if (event.target.closest('[data-ai-save]')) {
+      const user = currentUser();
+      if (!user || !lastAIWorkout) return;
+      user.customPrograms = user.customPrograms || [];
+      user.customPrograms.push({
+        id: 'c' + Date.now().toString(36), name: lastAIWorkout.name, goal: user.profile ? user.profile.goal : '',
+        week: [{ label: 'Day 1', focus: lastAIWorkout.focus, items: [...lastAIWorkout.items] }],
+        official: false, builtin: false, author: user.name, email: user.email, createdAt: new Date().toISOString()
+      });
+      saveCurrentUser(user);
+      renderLibrary(user);
+      bubble('bot', `<p>Saved <strong>${esc(lastAIWorkout.name)}</strong> to your program library — start it anytime from below.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-library">Open library →</button></p>`);
+    }
   });
 })();
 
