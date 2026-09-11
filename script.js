@@ -903,7 +903,7 @@ const renderProfile = () => {
   view.hidden = !user;
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
     });
@@ -1096,6 +1096,7 @@ const normalizeDash = user => {
   if (user.assignedCoach === undefined) { user.assignedCoach = null; changed = true; }
   if (user.customDiet === undefined) { user.customDiet = null; changed = true; }
   if (user.mainGoal === undefined) { user.mainGoal = null; changed = true; }
+  if (user.checkinCount === undefined) { user.checkinCount = 0; changed = true; }
   if (!user.visits) {
     user.visits = (user.checkins || []).map(d => ({ at: `${d}T12:00:00.000`, method: 'manual' }));
     changed = true;
@@ -1360,6 +1361,7 @@ const renderDashboard = user => {
   renderLibrary(user);
   renderGoals(user);
   renderAttendance(user);
+  renderChallenges(user);
   renderCoachSection(user);
   renderProgress(user).catch(() => {});
 };
@@ -1950,8 +1952,11 @@ const openCheckin = (presetWeek, existing) => {
     }
     submitBtn.disabled = false;
     submitBtn.textContent = 'Save check-in';
+    user.checkinCount = await ProgressDB.all(user.email).then(e => e.length).catch(() => user.checkinCount || 0);
+    saveCurrentUser(user);
     document.getElementById('checkin-dialog').close();
     await renderProgress(user).catch(() => {});
+    renderChallenges(user);
   });
 
   const pdAngles = document.getElementById('pd-angles');
@@ -2022,8 +2027,11 @@ const openCheckin = (presetWeek, existing) => {
     if (cmpA === activeEntryId) cmpA = null;
     if (cmpB === activeEntryId) cmpB = null;
     activeEntryId = null;
+    user.checkinCount = await ProgressDB.all(user.email).then(e => e.length).catch(() => user.checkinCount || 0);
+    saveCurrentUser(user);
     document.getElementById('progress-dialog').close();
     await renderProgress(user).catch(() => {});
+    renderChallenges(user);
   });
   const progressDialog = document.getElementById('progress-dialog');
   if (progressDialog) progressDialog.addEventListener('click', event => {
@@ -2748,7 +2756,7 @@ const renderClientDetail = (coach, m) => {
 
   body.innerHTML =
   `<p class="eyebrow">CLIENT FILE · ${esc(m.memberId || 'NO PASS YET')}</p><h2>${esc(m.name)}</h2>` +
-  `<p class="client-file-sub">${esc(m.email).toUpperCase()} · ${esc(memberStatus(m))} · STREAK ${stats.streak} · ${stats.total} VISITS</p>` +
+  `<p class="client-file-sub">${esc(m.email).toUpperCase()} · ${esc(memberStatus(m))} · STREAK ${stats.streak} · ${stats.total} VISITS · LV ${levelOf(pointsOf(m)).n}</p>` +
   `<div class="cgrid">` +
   `<section class="cblock"><span class="today-tag">ACTIVE PROGRAM</span>` +
     (ap && ap.week
@@ -4008,6 +4016,164 @@ const clientGoalLine = m => {
       saveCurrentUser(user);
       renderGoalList(user);
     }
+  });
+})();
+
+/* ===========================================================================
+   CHALLENGES & GAMIFICATION — derived points/levels (always consistent, never
+   double-counted), 14 auto-tracked challenges, same-browser leaderboards,
+   level-based rewards. All computed live from real member data.
+   =========================================================================== */
+const LEVELS = [[0, 'Rookie'], [100, 'Regular'], [250, 'Committed'], [500, 'Grinder'], [1000, 'Athlete'], [1750, 'Elite'], [2750, 'Legend'], [4000, 'Icon']];
+const levelOf = pts => {
+  let idx = 0;
+  LEVELS.forEach(([need], i) => { if (pts >= need) idx = i; });
+  const next = LEVELS[idx + 1] || null;
+  const base = LEVELS[idx][0];
+  const pct = next ? Math.min(100, Math.round(((pts - base) / (next[0] - base)) * 100)) : 100;
+  return { n: idx + 1, name: LEVELS[idx][1], pts, next: next ? next[0] : null, pct };
+};
+const proteinStreak = u => {
+  const tg = getDietTargets(u).p || 0;
+  if (!tg) return 0;
+  const keys = lastNDayKeys(30);
+  let n = 0;
+  const start = sumMacroDay(u, keys[0], 'p') >= tg ? 0 : 1;
+  for (let i = start; i < keys.length; i++) {
+    if (sumMacroDay(u, keys[i], 'p') >= tg) n++;
+    else break;
+  }
+  return n;
+};
+const logStreak = u => {
+  const keys = lastNDayKeys(60);
+  let n = 0;
+  const start = ((u.foodLog || {})[keys[0]] || []).length ? 0 : 1;
+  for (let i = start; i < keys.length; i++) {
+    if (((u.foodLog || {})[keys[i]] || []).length) n++;
+    else break;
+  }
+  return n;
+};
+const weightGoalPct = u => {
+  const mg = u.mainGoal || {};
+  const ws = mergedWeights(u);
+  const target = +mg.target > 0 ? +mg.target : (u.profile && +u.profile.target) || 0;
+  if (!target || !ws.length) return 0;
+  const start = +mg.start > 0 ? +mg.start : ws[0].weight;
+  const cur = ws[ws.length - 1].weight;
+  const total = Math.abs(target - start);
+  if (!total) return 0;
+  const done = target < start ? start - cur : cur - start;
+  return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+};
+const CHALLENGES = [
+  { id: 'first', emoji: '👣', name: 'First Check-In', desc: 'Walk through the door once.', target: 1, reward: 25, prog: u => (u.visits || []).length },
+  { id: 'streak7', emoji: '🔥', name: 'Week Warrior', desc: '7-day check-in streak.', target: 7, reward: 50, prog: u => calcStreak(u.checkins) },
+  { id: 'streak30', emoji: '♾️', name: 'Unstoppable', desc: '30-day check-in streak.', target: 30, reward: 200, prog: u => calcStreak(u.checkins) },
+  { id: 'club100', emoji: '💯', name: 'Century Club', desc: '100 all-time visits.', target: 100, reward: 300, prog: u => (u.visits || []).length },
+  { id: 'steps10k', emoji: '👟', name: '10K Day', desc: '10,000 steps in one day.', target: 10000, reward: 60, prog: u => Math.max(0, ...Object.values(u.stepsLog || {})) },
+  { id: 'steps70k', emoji: '🚀', name: 'Step Machine', desc: '70,000 steps in 7 days.', target: 70000, reward: 120, prog: u => lastNDayKeys(7).reduce((a, k) => a + ((u.stepsLog || {})[k] || 0), 0) },
+  { id: 'protein5', emoji: '🍗', name: 'Protein Streak', desc: 'Hit protein 5 days straight.', target: 5, reward: 100, prog: u => proteinStreak(u) },
+  { id: 'log7', emoji: '📝', name: 'Consistent Logger', desc: 'Log food 7 days straight.', target: 7, reward: 80, prog: u => logStreak(u) },
+  { id: 'pr1', emoji: '🏅', name: 'PR Hunter', desc: 'Log your first PR.', target: 1, reward: 50, prog: u => (u.prs || []).length },
+  { id: 'squat', emoji: '🦵', name: 'Squat PR', desc: 'Log a squat personal record.', target: 1, reward: 60, prog: u => (u.prs || []).filter(r => /squat/i.test(r.lift || '')).length },
+  { id: 'workouts50', emoji: '⚒️', name: 'Half Century', desc: 'Complete 50 workouts.', target: 50, reward: 150, prog: u => Object.keys(u.workoutDone || {}).length },
+  { id: 'goal100', emoji: '🎯', name: 'Goal Crusher', desc: 'Reach your weight goal.', target: 100, reward: 150, prog: u => weightGoalPct(u) },
+  { id: 'transform4', emoji: '📸', name: 'Transformation', desc: 'Log 4 weekly check-ins.', target: 4, reward: 120, prog: u => u.checkinCount || 0 },
+  { id: 'early5', emoji: '🌅', name: 'Early Bird', desc: '5 check-ins before 8 AM.', target: 5, reward: 70, prog: u => (u.visits || []).filter(v => new Date(v.at).getHours() < 8).length }
+];
+const pointsOf = u => {
+  if (!u) return 0;
+  const visits = (u.visits || []).length;
+  const workouts = Object.keys(u.workoutDone || {}).length;
+  const foodDays = Object.keys(u.foodLog || {}).filter(k => (u.foodLog[k] || []).length).length;
+  const prs = (u.prs || []).length;
+  const measures = (u.measurements || []).length;
+  const goalsDone = (u.goals || []).filter(g => g.done).length;
+  const checkins = u.checkinCount || 0;
+  let pts = visits * 10 + workouts * 20 + foodDays * 5 + prs * 50 + measures * 10 + goalsDone * 100 + checkins * 30;
+  CHALLENGES.forEach(c => {
+    let cur = 0;
+    try { cur = c.prog(u) || 0; } catch (err) { cur = 0; }
+    if (cur >= c.target) pts += c.reward;
+  });
+  return pts;
+};
+const REWARDS = [
+  { level: 2, emoji: '🎟️', text: 'Free guest pass — bring a friend' },
+  { level: 3, emoji: '🥤', text: '10% off shakers & merch' },
+  { level: 4, emoji: '🥗', text: 'Free diet-plan review with a coach' },
+  { level: 5, emoji: '👕', text: '15% off ONYX merch + 2 guest passes' },
+  { level: 6, emoji: '💪', text: 'Free personal-training session' },
+  { level: 7, emoji: '🏆', text: 'Limited ONYX athlete tee' },
+  { level: 8, emoji: '👑', text: 'Founders wall feature + 25% off renewal' }
+];
+let boardMode = 'visits';
+
+const renderChallenges = user => {
+  const section = document.getElementById('profile-challenges');
+  if (!section || !user) return;
+  section.hidden = false;
+  const lv = levelOf(pointsOf(user));
+  document.getElementById('ch-level').innerHTML =
+    `<div class="ch-level-badge"><b>LV ${lv.n}</b><strong>${esc(lv.name)}</strong><span>${fmtNum(lv.pts)} PTS${lv.next ? ` · ${fmtNum(lv.next - lv.pts)} TO LV ${lv.n + 1}` : ' · MAX LEVEL'}</span></div>` +
+    `<span class="ch-bar"><i style="width:${lv.pct}%"></i></span>`;
+  document.getElementById('ch-grid').innerHTML = CHALLENGES.map(c => {
+    let cur = 0;
+    try { cur = c.prog(user) || 0; } catch (err) { cur = 0; }
+    const done = cur >= c.target;
+    const pct = Math.min(100, Math.round((cur / c.target) * 100));
+    return `<div class="ch-card${done ? ' is-done' : ''}"><b>${c.emoji}</b><div><strong>${esc(c.name)}${done ? ' 🏆' : ''}</strong><span>${esc(c.desc)}</span>` +
+      `<span class="ch-bar"><i style="width:${pct}%"></i></span><em>${fmtNum(Math.min(cur, c.target))} / ${fmtNum(c.target)} · +${c.reward} PTS</em></div></div>`;
+  }).join('');
+  document.getElementById('ch-month').textContent = new Date().toLocaleDateString('en-IN', { month: 'long' }).toUpperCase();
+  renderBoard(user);
+  document.getElementById('ch-rewards').innerHTML = REWARDS.map(r => {
+    const unlocked = lv.n >= r.level;
+    return `<div class="ch-reward${unlocked ? ' is-open' : ''}"><b>${unlocked ? r.emoji : '🔒'}</b><div><strong>${esc(r.text)}</strong><span>${unlocked ? 'UNLOCKED — CLAIM AT FRONT DESK' : `UNLOCKS AT LV ${r.level}`}</span></div></div>`;
+  }).join('');
+};
+
+const renderBoard = me => {
+  const box = document.getElementById('ch-board');
+  if (!box || !me) return;
+  document.querySelectorAll('#ch-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.board === boardMode));
+  const month = dayKey().slice(0, 7);
+  const rows = Object.values(readUsers())
+    .filter(u => u && !isCoach(u) && u.name)
+    .map(u => {
+      let best = 0;
+      try { best = attendanceStats(u).best || 0; } catch (err) { best = 0; }
+      return {
+        name: u.name, me: u.email === me.email,
+        visits: (u.visits || []).filter(v => String(v.at || '').slice(0, 7) === month).length,
+        points: pointsOf(u), streak: best
+      };
+    })
+    .sort((a, b) => b[boardMode] - a[boardMode])
+    .slice(0, 10);
+  const medals = ['🥇', '🥈', '🥉'];
+  const unit = boardMode === 'visits' ? 'visits' : boardMode === 'points' ? 'pts' : 'days';
+  box.innerHTML = rows.length ? rows.map((r, i) =>
+    `<div class="ch-row${r.me ? ' is-me' : ''}"><b>${medals[i] || `#${i + 1}`}</b><strong>${esc(r.name)}${r.me ? ' (YOU)' : ''}</strong><span>${fmtNum(r[boardMode])} ${unit}</span></div>`
+  ).join('') : '<p class="log-empty">No members on this device yet.</p>';
+  if (rows.length > 1) {
+    const rank = rows.findIndex(r => r.me);
+    if (rank >= 0) box.innerHTML += `<p class="ch-rank">You rank <strong>#${rank + 1}</strong> of ${rows.length} this month.</p>`;
+  }
+};
+
+/* ---------- challenges events (bound once) ---------- */
+(() => {
+  const tabs = document.getElementById('ch-tabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', event => {
+    const btn = event.target.closest('[data-board]');
+    if (!btn) return;
+    boardMode = btn.dataset.board;
+    const user = currentUser();
+    if (user) renderBoard(user);
   });
 })();
 
