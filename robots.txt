@@ -2,6 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /profile.html
 Disallow: /trainers.html
+Disallow: /admin.html
 
 Sitemap: https://onyxathletic.club/sitemap.xml
-Disallow: /admin.html
