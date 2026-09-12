@@ -16,6 +16,16 @@ const ONYX = {
   // is ever activated in the browser ** — see beginPaymentFlow() below.
   MEMBERSHIP_VERIFY_ENDPOINT: '',
 
+  // Staff rosters. An email listed here unlocks its dashboard after a normal
+  // signup/login (accounts stay browser-local until AUTH_ENDPOINT is set).
+  // DEMO VALUES — one address in all three lists so a single signup previews
+  // admin.html, trainers.html and the manager-only views. Sign up with
+  // demo@onyxathletic.club and any password of 6+ characters.
+  // TODO: replace with real staff emails (or empty the arrays) before launch.
+  ADMIN_EMAILS: ['demo@onyxathletic.club'],
+  MANAGER_EMAILS: ['demo@onyxathletic.club'],
+  COACH_EMAILS: ['demo@onyxathletic.club'],
+
   // Fallback contact channels used when CONTACT_ENDPOINT is blank.
   WHATSAPP: '917973960144',
   PHONE: '+917973960144',
@@ -25,7 +35,8 @@ const ONYX = {
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const scrollBehavior = () => (reducedMotion ? 'auto' : 'smooth');
 
-document.querySelectorAll('a[href^="#"]:not(.pillar)').forEach(link => link.addEventListener('click', event => {
+// :not(.pillar)/:not([data-program]) — those tiles open a program dialog instead of scrolling
+document.querySelectorAll('a[href^="#"]:not(.pillar):not([data-program])').forEach(link => link.addEventListener('click', event => {
   const target = document.querySelector(link.getAttribute('href'));
   if (target) { event.preventDefault(); target.scrollIntoView({ behavior: scrollBehavior() }); }
 }));
@@ -40,12 +51,15 @@ document.querySelectorAll('.directional-tile').forEach(tile => {
       : (y > 0 ? 'bottom' : 'top');
   };
   tile.addEventListener('pointerenter', event => {
+    // Touch and pen get no hover wipe: a tap is a navigation, not a hover.
+    if (event.pointerType && event.pointerType !== 'mouse') return;
     tile.classList.remove('enter-left', 'enter-right', 'enter-top', 'enter-bottom');
     tile.classList.add(`enter-${direction(event)}`);
     requestAnimationFrame(() => tile.classList.add('is-hovered'));
   });
   tile.addEventListener('pointerleave', event => {
     tile.classList.remove('enter-left', 'enter-right', 'enter-top', 'enter-bottom');
+    if (event.pointerType && event.pointerType !== 'mouse') { tile.classList.remove('is-hovered'); return; }
     tile.classList.add(`enter-${direction(event)}`);
     requestAnimationFrame(() => tile.classList.remove('is-hovered'));
   });
@@ -57,6 +71,7 @@ document.querySelectorAll('.nav-directional').forEach(link => {
     link.classList.toggle('enter-left', event.clientX < box.left + box.width / 2);
   };
   link.addEventListener('pointerenter', event => {
+    if (event.pointerType && event.pointerType !== 'mouse') return;
     setDirection(event);
     requestAnimationFrame(() => link.classList.add('is-hovered'));
   });
@@ -186,7 +201,20 @@ if (plansDialog) {
   plansDialog.querySelector('.plans-done').addEventListener('click', () => plansDialog.close());
 }
 
-// Pillar program dialog: tile morphs into a pill, then opens a per-discipline flow
+// Memory wall: the extra moments panel. With no JS it simply stays open;
+// with JS it collapses to the first three and the button expands it smoothly.
+const memoryMore = document.getElementById('memory-more');
+const memoryToggle = document.getElementById('memory-toggle');
+if (memoryMore && memoryToggle) {
+  const setMemoryOpen = open => {
+    memoryMore.classList.toggle('is-open', open);
+    memoryToggle.setAttribute('aria-expanded', String(open));
+    memoryToggle.querySelector('span').textContent = open ? 'Fewer moments from the wall' : 'More moments from the wall';
+  };
+  memoryMore.classList.add('no-anim', 'is-collapsible');
+  requestAnimationFrame(() => requestAnimationFrame(() => memoryMore.classList.remove('no-anim')));
+  memoryToggle.addEventListener('click', () => setMemoryOpen(!memoryMore.classList.contains('is-open')));
+}
 const programDialog = document.getElementById('program-dialog');
 if (programDialog) {
   const PROGRAMS = {
@@ -345,6 +373,16 @@ if (programDialog) {
     pillar.addEventListener('click', event => {
       event.preventDefault();
       openProgram(pillar, key);
+    });
+  });
+
+  // The "Train your way" index reuses these same dialogs: a row that names a
+  // discipline opens its program exactly like the pillar tile does, while its
+  // href stays a real in-page destination for visitors without JS.
+  document.querySelectorAll('.ways-list [data-program]').forEach(row => {
+    row.addEventListener('click', event => {
+      event.preventDefault();
+      openProgram(row, row.dataset.program);
     });
   });
 
@@ -2073,7 +2111,7 @@ const openCheckin = (presetWeek, existing) => {
    stats, heatmap, 30-day challenge, badges. Demo storage is local; staff PIN
    and pass codes are demo-grade until the backend replaces them.
    =========================================================================== */
-ONYX.GYM_LOCATION = ONYX.GYM_LOCATION || { lat: 30.7410, lng: 76.6510, radiusM: 250 }; // TODO: confirm exact gym coords
+ONYX.GYM_LOCATION = ONYX.GYM_LOCATION || { lat: 30.754742, lng: 76.622115, radiusM: 250 };
 ONYX.RECEPTION_PIN = ONYX.RECEPTION_PIN || '2468'; // demo staff PIN — real staff auth needs backend
 
 // QR-ENCODER-START
@@ -5237,6 +5275,91 @@ const renderAdminSite = () => {
     const note = document.getElementById('site-saved');
     if (note) note.textContent = 'Reset — reload the page to see defaults.';
   });
+})();
+
+/* ===========================================================================
+   FILM PLAYER (?v=44) — minimal chrome for the "Watch the room" reel.
+   One play disc on the poster; after that, click or Space toggles play/pause
+   and nothing else. A buffering spinner and a failure card are the only
+   other states.
+   Progressive enhancement: `controls` stays in the markup and is removed
+   only once this initialises, so a failed script load still leaves a usable
+   native player.
+   =========================================================================== */
+(() => {
+  const players = [...document.querySelectorAll('[data-player]')];
+  if (!players.length) return;
+
+  const ICON = {
+    play: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.4 5.1v13.8L19.2 12z" fill="currentColor"/></svg>',
+    replay: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5.3V2.2L7.1 6.6 12 11V7.9a5.3 5.3 0 1 1-5.3 5.3H3.9A8.1 8.1 0 1 0 12 5.3z" fill="currentColor"/></svg>'
+  };
+
+  const initPlayer = player => {
+    const video = player.querySelector('[data-pl-video]');
+    const bigPlay = player.querySelector('[data-pl-bigplay]');
+    const spinner = player.querySelector('[data-pl-spinner]');
+    const errorEl = player.querySelector('[data-pl-error]');
+    if (!video || !bigPlay) return;
+
+    const setIcons = () => {
+      const ended = video.ended;
+      bigPlay.innerHTML = ended ? ICON.replay : ICON.play;
+      bigPlay.setAttribute('aria-label', ended ? 'Play again' : 'Play video');
+      player.classList.toggle('is-playing', !video.paused && !ended);
+      player.classList.toggle('is-ended', ended);
+      // The disc hides while playing; hand focus back to the shell so Space
+      // keeps working for keyboard users instead of falling to <body>.
+      if (!video.paused && document.activeElement === bigPlay) {
+        player.focus({ preventScroll: true });
+      }
+    };
+    const setSpinner = on => { spinner.hidden = !on; };
+    const toggle = () => {
+      if (player.classList.contains('is-error')) return;
+      if (video.ended) video.currentTime = 0;
+      if (video.paused) {
+        const started = video.play();
+        if (started && started.catch) started.catch(() => { /* blocked; state already reads paused */ });
+      } else {
+        video.pause();
+      }
+    };
+
+    bigPlay.addEventListener('click', toggle);
+    video.addEventListener('click', toggle);
+
+    // Space is the only shortcut, and only while the shell holds focus, so
+    // the page's own scrolling is never hijacked.
+    player.addEventListener('keydown', event => {
+      if (event.key !== ' ' && event.key !== 'Spacebar') return;
+      if (event.target !== player) return;   // a focused button handles its own Space
+      event.preventDefault();
+      toggle();
+    });
+
+    video.addEventListener('play', setIcons);
+    video.addEventListener('pause', setIcons);
+    video.addEventListener('ended', () => { setIcons(); setSpinner(false); });
+    video.addEventListener('waiting', () => setSpinner(true));
+    video.addEventListener('stalled', () => setSpinner(true));
+    video.addEventListener('seeking', () => { if (!video.paused) setSpinner(true); });
+    video.addEventListener('seeked', () => setSpinner(false));
+    video.addEventListener('playing', () => setSpinner(false));
+    video.addEventListener('canplay', () => setSpinner(false));
+    video.addEventListener('error', () => {
+      player.classList.add('is-error');
+      errorEl.textContent = 'This video can\u2019t play in your browser \u2014 come see the real thing instead.';
+      errorEl.hidden = false;
+      setSpinner(false);
+    });
+
+    video.removeAttribute('controls');
+    player.classList.add('is-ready');
+    setIcons();
+  };
+
+  players.forEach(initPlayer);
 })();
 
 // First paint — runs after every module above is defined.

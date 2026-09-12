@@ -24,6 +24,23 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`,
 `.nojekyll` (stops GitHub Pages running the folder through Jekyll).
 
+## Previewing the gated dashboards
+
+`admin.html`, `trainers.html` and the manager views are roster-gated. All three
+rosters currently contain one demo address so a single account unlocks
+everything:
+
+1. Serve the folder (`python3 -m http.server 3000`) and open any page.
+2. Choose **Log in → Sign up** and register `demo@onyxathletic.club` with any
+   name and a password of 6+ characters. Accounts are browser-local
+   (`localStorage`) until `AUTH_ENDPOINT` is set.
+3. Click **Skip for now** on the assessment dialog.
+4. Open `admin.html` (owner control center) or `trainers.html` (coach studio).
+   The reception desk on `profile.html` uses the PIN `2468`.
+
+To use real staff instead, replace the addresses in `ADMIN_EMAILS`,
+`MANAGER_EMAILS` and `COACH_EMAILS` at the top of `script.js`, then bump `?v=`.
+
 ## Before going live — do these three things
 
 ### 1. Set the real domain
@@ -77,9 +94,63 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=40`. Bump that
+- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS` and `RECEPTION_PIN` live in `script.js` — confirm the PIN before launch. `GYM_LOCATION` is set to the owner-supplied coordinates 30.754742, 76.622115 (used by the map embed, the directions link and the member check-in geofence).
+- **Cache busting.** Stylesheet and script are linked as `?v=50`. Bump that
   number whenever you edit `styles.css` or `script.js`.
+- **"Train your way" hub.** Each of the five rows promises one thing and its
+  click delivers exactly that: *Strength training* and *Mobility & recovery*
+  open the same program dialogs as the pillar tiles (`data-program`, with the
+  row's `href="#train"` as the no-JS fallback), while *Group classes*,
+  *Personal training* and *Community* scroll to the timetable, the PT pricing
+  and the memory wall. The small line under each label is quoted from that
+  destination's own copy — if you change the 14-person cap, the ₹799 rate or
+  the wall's cards, update the subline with it.
+- **Film player.** The *Watch the room* reel is deliberately chrome-free: one
+  play disc on the poster, then **click or Space** toggles play/pause — no
+  control bar, no seek bar, no shortcut legend. A buffering spinner and a
+  failure card are the only other states. It lives in the `FILM PLAYER` block
+  at the end of `script.js` with styles under the matching banner in
+  `styles.css`. Progressive enhancement: the `<video>` keeps its native
+  `controls` attribute and the script removes it only after the custom UI
+  initialises, so a failed script load still leaves a working browser player.
+- **The reel itself.** `assets/onyx-tour.mp4` (18s, 1080p25, voiced, ~4.3 MB,
+  `+faststart`) is an AI-generated brand film: six photoreal stills of one
+  synthetic guide in one coherent interior, animated with camera pushes and
+  pans, 0.5s dissolves, a contrast/saturation grade and fine grain, cut on the
+  narration's real sentence boundaries (solved from `silencedetect`), ending on
+  a drawn brand card. Source stills live in `assets/gen/`; the poster is
+  `assets/onyx-tour-poster.jpg`. **The presenter is synthetic** — she is not a
+  member or a coach. Organic use is your call, but paid placements on Meta /
+  Google may require an AI-content disclosure. The previous
+  `onyx-overview.mp4` was generic stock-style footage of a different gym and
+  has been deleted (recoverable from git history).
+- **Site photography is synthetic.** The three pillar tiles, the About-page
+  band and the memory wall are AI-generated placeholders shot to match the
+  reel's invented interior (one coherent room, dark charcoal + deep green,
+  warm practicals). The wall ships two moments open — *01 / FIRST 5K CLUB*
+  and *02 / POST CLASS* — plus six more (03–08) inside a smoothly expanding
+  panel behind **More moments from the wall** — a full-width list row under the
+  grid; the six cards rise in staggered as it eases open. With JS disabled the
+  panel stays open so nothing is hidden. Every person in these images is
+  synthetic: swap in real member and coach photos before launch.
+- **Placeholder photography.** Several `assets/*.jpg` "facility" shots are
+  stock-style renders, not the Kharar room — `facility-strength.jpg` even
+  carries a third-party "ELITE STRENGTH" sign, and `gym-hero.jpg` is a frame
+  from the old stock clip. Replace them before launch; the coherent AI stills
+  in `assets/gen/` are a ready drop-in set.
+- **Mobile.** The `MOBILE POLISH` layer at the end of `styles.css` handles touch
+  feel: no tap highlight, `touch-action: manipulation` (no double-tap zoom
+  delay), contained overscroll on the coach rail / timetable / dialogs,
+  safe-area insets under the FAB and menu, 16 px input text so iOS never
+  zooms on focus, edge shadows that reveal the timetable scrolls, plus
+  extra passes for phones under 400 px and landscape phones. The `MOBILE FIT`
+  layer after it keeps touch clean: taps trigger no hover wipe (pointer-type
+  guarded in `script.js`), stuck `:hover` states are reset under
+  `(hover: none)`, the floating contact pill becomes a 56 px disc with an
+  `aria-label`, page-level CTAs size to their label instead of full-width
+  slabs, and the burger / story dots / footer links get real tap targets. The existing
+  breakpoints (720 / 900 / 680 / 860 / 1100 / 1250) and the full-screen
+  mobile menu were already sound and are untouched.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
 - `profile.html` is `noindex` and disallowed in `robots.txt`; it is a private
@@ -103,6 +174,9 @@ In place on the frontend:
 - **Gating.** `admin.html` requires an `ADMIN_EMAILS` (or limited
   `MANAGER_EMAILS`) login and is `noindex` + disallowed in `robots.txt`,
   alongside `profile.html` and `trainers.html`.
+  ⚠️ The three rosters currently hold the demo address
+  `demo@onyxathletic.club` (see below) — **clear or replace them before
+  launch**, or anyone who signs up with that address gets owner access.
 - **Terms.** Membership terms, refunds, health and conduct live in
   `privacy.html`, linked from every footer as “Privacy & Terms”.
 
