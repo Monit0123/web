@@ -588,7 +588,10 @@ const supabaseAuth = async (mode, email, password, name) => {
     body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('Supabase email limit reached. If your account appears in Authentication → Users, wait a minute and use Log in instead. For a dummy project, disable Confirm email to avoid confirmation-email limits.');
+    throw new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+  }
   const token = payload.access_token;
   if (!token && mode === 'signup') throw new Error('Account created, but email confirmation is required before you can log in.');
   const user = payload.user || {};
@@ -1128,7 +1131,7 @@ document.querySelectorAll('[data-pt-plan]').forEach(button => button.addEventLis
    Demo storage: dashboard data lives on the member's user record in
    localStorage until the backend endpoints replace it (see README).
    =========================================================================== */
-ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@onyxathletic.club'].
+ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@trainwithonyx.fwh.is'].
 
 const ONYX_PROGRAMS = [
   { id: 'onyx-engine', name: 'Fat Loss Engine', goal: 'lose', official: true, builtin: true, author: 'ONYX Coaching Team', week: [

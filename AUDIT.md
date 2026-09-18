@@ -65,7 +65,7 @@ For tomorrow morning, launch the public marketing site only after the content/le
 
 ### SEO and trust
 
-- Replace `onyxathletic.club` everywhere once the real domain is confirmed, including canonical tags, Open Graph URLs, `robots.txt`, `sitemap.xml`, JSON-LD, and payment redirects.
+- Replace `trainwithonyx.fwh.is` everywhere once the real domain is confirmed, including canonical tags, Open Graph URLs, `robots.txt`, `sitemap.xml`, JSON-LD, and payment redirects.
 - Generate a real OG image and social previews. Validate all JSON-LD; remove the aggregate rating unless it is a genuine, review-platform-supported rating.
 - Verify the `ExerciseGym`, `LocalBusiness`, Offer, FAQPage, and opening-hours data against reality. Sunday closed hours should be represented in a way search engines accept.
 - Add Organization/LocalBusiness details such as logo, service area, sameAs, and precise map coordinates after confirmation.

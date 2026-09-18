@@ -28,11 +28,11 @@ Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`
 
 ### 1. Set the real domain
 
-The site currently uses the placeholder `https://onyxathletic.club` in canonical
+The site currently uses the placeholder `https://trainwithonyx.fwh.is` in canonical
 tags, Open Graph URLs, `robots.txt` and `sitemap.xml`. Replace it everywhere:
 
 ```bash
-grep -rl 'onyxathletic.club' . | xargs sed -i 's|https://onyxathletic.club|https://YOUR-DOMAIN|g'
+grep -rl 'trainwithonyx.fwh.is' . | xargs sed -i 's|https://trainwithonyx.fwh.is|https://YOUR-DOMAIN|g'
 ```
 
 ### 2. Wire up the backend
