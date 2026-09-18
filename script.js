@@ -433,7 +433,8 @@ if (contactDialog) {
     if (!/^[6-9]\d{9}$/.test(phone)) return showFieldError('Enter a valid 10-digit Indian mobile number.');
     showFieldError('');
 
-    const lead = { name, phone: '+91' + phone, source: window.location.pathname, at: new Date().toISOString() };
+    const valueOf = name => { const field = contactForm.elements[name]; return field ? String(field.value || '').trim() : ''; };
+    const lead = { name, phone: '+91' + phone, source: window.location.pathname, at: new Date().toISOString(), preferredDate: valueOf('preferred-date'), preferredTime: valueOf('preferred-time'), goal: valueOf('goal'), experience: valueOf('experience'), consent: !!contactForm.elements['contact-consent']?.checked };
     try {
       const stored = JSON.parse(localStorage.getItem('onyx-leads') || '[]');
       stored.push(lead);
@@ -470,6 +471,18 @@ if (contactDialog) {
     }
 
     contactEcho.textContent = `${name.toUpperCase()} · +91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
+    const successEyebrow = contactSuccess.querySelector('.eyebrow');
+    const successTitle = contactSuccess.querySelector('.contact-success-title');
+    const successCopy = contactSuccess.querySelector('.plans-confirmation-copy');
+    if (delivered) {
+      if (successEyebrow) successEyebrow.textContent = 'Request received';
+      if (successTitle) successTitle.innerHTML = 'You’re on<br /><em>our list.</em>';
+      if (successCopy) successCopy.textContent = 'Our team will reach out within 24 hours to confirm your preferred slot.';
+    } else {
+      if (successEyebrow) successEyebrow.textContent = 'One last step';
+      if (successTitle) successTitle.innerHTML = 'Send it to<br /><em>ONYX.</em>';
+      if (successCopy) successCopy.textContent = 'Your request is ready. Please use WhatsApp, call, or email below so a coach can confirm your slot. Nothing is booked until a human confirms it.';
+    }
     contactForm.reset();
     contactMain.hidden = true;
     contactSuccess.hidden = false;
@@ -5245,3 +5258,56 @@ updateAuthLinks();
 renderProfile();
 renderCoach();
 renderAdmin();
+
+/* Launch UX enhancements -------------------------------------------------- */
+(() => {
+  const body = document.body;
+  const isPrivate = body.classList.contains('profile-page') || body.classList.contains('admin-page') || body.classList.contains('coach-page');
+  const phone = ONYX.PHONE || '+917973960144';
+  const whatsapp = ONYX.WHATSAPP || phone.replace(/\D/g, '');
+
+  // Give all public landing pages the same thumb-friendly primary actions.
+  if (!isPrivate && !document.querySelector('.mobile-action-bar')) {
+    const bar = document.createElement('nav');
+    bar.className = 'mobile-action-bar';
+    bar.setAttribute('aria-label', 'Quick actions');
+    bar.innerHTML = `<a href="tel:${phone}" aria-label="Call ONYX">☎ <span>Call</span></a><a href="https://wa.me/${whatsapp}" target="_blank" rel="noopener" aria-label="Message ONYX on WhatsApp">◌ <span>WhatsApp</span></a><button type="button" data-open-contact aria-label="Book a free trial">＋ <span>Book trial</span></button>`;
+    document.body.appendChild(bar);
+    bar.querySelector('[data-open-contact]')?.addEventListener('click', () => document.getElementById('contact-dialog')?.showModal());
+  }
+
+  // A simple member-app navigation layer: the detailed sections remain available below.
+  if (body.classList.contains('profile-page') && !document.querySelector('.member-bottom-nav')) {
+    const nav = document.createElement('nav');
+    nav.className = 'member-bottom-nav';
+    nav.setAttribute('aria-label', 'Member app navigation');
+    nav.innerHTML = `<a href="#profile-today"><b>⌂</b><span>Today</span></a><a href="#profile-training"><b>▤</b><span>Plan</span></a><a href="#profile-progress"><b>◉</b><span>Progress</span></a><a href="#profile-coach"><b>✦</b><span>Coach</span></a><a href="#profile-more"><b>⋯</b><span>More</span></a>`;
+    document.body.appendChild(nav);
+  }
+
+  // Do not silently pretend the app is online or that a request was delivered.
+  const setNetworkState = online => {
+    let banner = document.querySelector('.network-status');
+    if (online) { banner?.remove(); return; }
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'network-status';
+      banner.setAttribute('role', 'status');
+      banner.textContent = 'You are offline. Saved demo data stays on this device; new requests need internet.';
+      document.body.prepend(banner);
+    }
+  };
+  window.addEventListener('offline', () => setNetworkState(false));
+  window.addEventListener('online', () => setNetworkState(true));
+  if (!navigator.onLine) setNetworkState(false);
+
+  // Keyboard trap for native modal dialogs; Escape remains a native close action.
+  document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled])')].filter(el => !el.closest('[hidden]'));
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }));
+})();
