@@ -459,18 +459,22 @@ if (contactDialog) {
     // letting it die in localStorage. WhatsApp first, email as the fallback.
     if (!delivered) {
       const message = `Hi ONYX, please call me back.\n\nName: ${name}\nPhone: +91 ${phone}\nPage: ${window.location.pathname}`;
-      const whatsapp = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}`;
       const handoff = contactSuccess.querySelector('.contact-handoff') || (() => {
         const el = document.createElement('p');
         el.className = 'contact-handoff';
         contactSuccess.querySelector('.contact-echo').after(el);
         return el;
       })();
-      handoff.innerHTML =
-        `<a class="handoff-primary" href="${whatsapp}" target="_blank" rel="noopener">Send it on WhatsApp</a>` +
-        `<a href="tel:${ONYX.PHONE}">Call ${ONYX.PHONE}</a>` +
-        `<a href="mailto:${ONYX.EMAIL}?subject=${encodeURIComponent('Call back request — ' + name)}&body=${encodeURIComponent(message)}">Email us</a>`;
-      window.open(whatsapp, '_blank', 'noopener');
+      if (ONYX.DEMO_MODE) {
+        handoff.textContent = 'Demo only — this request stayed in this browser and was not sent to the gym.';
+      } else {
+        const whatsapp = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}`;
+        handoff.innerHTML =
+          `<a class="handoff-primary" href="${whatsapp}" target="_blank" rel="noopener">Send it on WhatsApp</a>` +
+          `<a href="tel:${ONYX.PHONE}">Call ${ONYX.PHONE}</a>` +
+          `<a href="mailto:${ONYX.EMAIL}?subject=${encodeURIComponent('Call back request — ' + name)}&body=${encodeURIComponent(message)}">Email us</a>`;
+        window.open(whatsapp, '_blank', 'noopener');
+      }
     }
 
     contactEcho.textContent = `${name.toUpperCase()} · +91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
