@@ -5352,3 +5352,8 @@ renderAdmin();
     localStorage.clear(); sessionStorage.clear(); window.location.href = 'index.html';
   });
 })();
+
+// Installable shell for the demo. Private/member data is deliberately not cached by the service worker.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
