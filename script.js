@@ -5327,3 +5327,28 @@ renderAdmin();
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }));
 })();
+
+// Demo privacy controls: make the browser-only nature of the prototype actionable.
+(() => {
+  const exportButton = document.getElementById('pf-export');
+  const deleteButton = document.getElementById('pf-delete-device');
+  const safeUser = () => {
+    const user = currentUser();
+    if (!user) return null;
+    const copy = JSON.parse(JSON.stringify(user));
+    delete copy.password; delete copy.hash; delete copy.salt;
+    return copy;
+  };
+  exportButton?.addEventListener('click', () => {
+    const data = safeUser();
+    if (!data) return;
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), member: data }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'onyx-my-data.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  deleteButton?.addEventListener('click', () => {
+    if (!window.confirm('Delete ONYX demo data from this device? This cannot be undone.')) return;
+    localStorage.clear(); sessionStorage.clear(); window.location.href = 'index.html';
+  });
+})();
