@@ -4,6 +4,9 @@
    Every integration below degrades safely when left blank.
    =========================================================================== */
 const ONYX = {
+  // Presentation mode: keeps payment links and business data safe while owners review the prototype.
+  DEMO_MODE: true,
+
   // Where "Request a call back" leads are POSTed as JSON:
   // { name, phone, source, at }.  Leave '' to use the WhatsApp/email handoff.
   CONTACT_ENDPOINT: '',
@@ -673,11 +676,11 @@ const beginPaymentFlow = (link, plan) => {
     return;
   }
   const fullPlan = plan.includes('PT') ? plan : `${plan} membership`;
-  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null };
+  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null, demo: !!ONYX.DEMO_MODE };
   user.pendingPayment = payment;                  // pending — NOT an active plan
   saveCurrentUser(user);
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
-  window.open(link, '_blank', 'noopener');
+  if (!ONYX.DEMO_MODE) window.open(link, '_blank', 'noopener');
   showPaymentPending(payment);
   if (document.body.classList.contains('profile-page')) renderProfile();
 };
@@ -695,12 +698,13 @@ const showPaymentPending = payment => {
     note.className = 'payment-ref';
     confirmation.querySelector('.plans-confirmation-copy').after(note);
   }
-  const nextStep = payment.plan.includes('PT')
-    ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
-    : `we activate your membership as soon as the payment clears. `;
-  note.innerHTML = `Your reference is <strong>${payment.ref}</strong>. Keep it handy — ` +
-    nextStep +
-    `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`;
+  const nextStep = ONYX.DEMO_MODE
+    ? `This is a presentation demo — no payment was taken and no membership was activated. `
+    : (payment.plan.includes('PT')
+      ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
+      : `we activate your membership as soon as the payment clears. `);
+  note.innerHTML = `Demo reference <strong>${payment.ref}</strong>. ` + nextStep +
+    (ONYX.DEMO_MODE ? `In the live version this step will open Razorpay and verify the webhook before access is granted.` : `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`);
   main.hidden = true;
   confirmation.hidden = false;
   if (!dialog.open) dialog.showModal();
@@ -5265,6 +5269,14 @@ renderAdmin();
   const isPrivate = body.classList.contains('profile-page') || body.classList.contains('admin-page') || body.classList.contains('coach-page');
   const phone = ONYX.PHONE || '+917973960144';
   const whatsapp = ONYX.WHATSAPP || phone.replace(/\D/g, '');
+
+  if (ONYX.DEMO_MODE && !document.querySelector('.demo-banner')) {
+    const banner = document.createElement('aside');
+    banner.className = 'demo-banner';
+    banner.setAttribute('role', 'note');
+    banner.innerHTML = '<strong>DEMO PRESENTATION</strong><span>Sample content and browser-only data — not a live membership or booking system.</span>';
+    document.body.prepend(banner);
+  }
 
   // Give all public landing pages the same thumb-friendly primary actions.
   if (!isPrivate && !document.querySelector('.mobile-action-bar')) {
