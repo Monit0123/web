@@ -574,6 +574,33 @@ const saveCurrentUser = record => {
   writeUsers(users);
 };
 
+const supabaseHeaders = token => ({
+  'Content-Type': 'application/json',
+  apikey: ONYX.SUPABASE_KEY,
+  Authorization: `Bearer ${token || ONYX.SUPABASE_KEY}`
+});
+const supabaseAuth = async (mode, email, password, name) => {
+  if (!ONYX.SUPABASE_URL || !ONYX.SUPABASE_KEY) return null;
+  const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+  const path = mode === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password';
+  const response = await fetch(base + path, {
+    method: 'POST', headers: supabaseHeaders(),
+    body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+  const token = payload.access_token;
+  if (!token && mode === 'signup') throw new Error('Account created, but email confirmation is required before you can log in.');
+  const user = payload.user || {};
+  let profile = {};
+  if (token && user.id) {
+    const profileResponse = await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=full_name,phone,role`, { headers: { ...supabaseHeaders(token), Accept: 'application/json' } });
+    const profiles = await profileResponse.json().catch(() => []);
+    profile = profiles[0] || {};
+  }
+  return { email: user.email || email, name: profile.full_name || name || email.split('@')[0], id: user.id, token, role: profile.role || 'member' };
+};
+
 // Inject the auth + assessment dialogs once, on every page.
 if (!document.getElementById('auth-dialog')) {
   document.body.insertAdjacentHTML('beforeend', `
@@ -769,6 +796,20 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
   if (password.length < 6) return fail('Password needs at least 6 characters.');
   if (authMode === 'signup' && name.length < 2) return fail('Please tell us your name.');
   fail('');
+
+  if (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY) {
+    try {
+      const remote = await supabaseAuth(authMode, email, password, name);
+      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRole: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+      saveCurrentUser(record);
+      localStorage.setItem(SESSION_KEY, email);
+      form.reset(); authDialog.close(); updateAuthLinks(); renderProfile();
+      if (authMode === 'signup') openOnboard(); else runPendingAction();
+      return;
+    } catch (error) {
+      return fail(error.message || 'Could not connect to the demo account service.');
+    }
+  }
 
   const users = readUsers();
   if (authMode === 'signup') {
@@ -4585,8 +4626,7 @@ const renderAvail = coach => {
    Auto-SMS/email/push and real payment capture need the backend.
    =========================================================================== */
 ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
-const isAdmin = user => !!user && Array.isArray(ONYX.ADMIN_EMAILS) &&
-  ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+const isAdmin = user => !!user && (user.supabaseRole === 'admin' || user.supabaseRole === 'manager' || (Array.isArray(ONYX.ADMIN_EMAILS) && ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase())));
 const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isManager(user) ? 'manager' : isCoach(user) ? 'coach' : 'member';
 const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
