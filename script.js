@@ -11,6 +11,10 @@ const ONYX = {
   // { name, phone, source, at }.  Leave '' to use the WhatsApp/email handoff.
   CONTACT_ENDPOINT: '',
 
+  // Supabase public browser config. RLS protects the tables; never put a service-role key here.
+  SUPABASE_URL: 'https://xetcagevubbvxjxinvcf.supabase.co',
+  SUPABASE_KEY: 'sb_publishable_WDE52G7LnSmnFHHL03OuzQ_imM4F12Z',
+
   // Real signup/login API. Leave '' to keep browser-local demo accounts.
   AUTH_ENDPOINT: '',
 
@@ -445,10 +449,17 @@ if (contactDialog) {
     } catch (error) { console.warn('Could not store lead locally.', error); }
 
     let delivered = false;
-    if (ONYX.CONTACT_ENDPOINT) {
+    if (ONYX.CONTACT_ENDPOINT || (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY)) {
       try {
-        const response = await fetch(ONYX.CONTACT_ENDPOINT, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lead)
+        const endpoint = ONYX.CONTACT_ENDPOINT || `${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads`;
+        const headers = { 'Content-Type': 'application/json' };
+        if (!ONYX.CONTACT_ENDPOINT) {
+          headers.apikey = ONYX.SUPABASE_KEY;
+          headers.Authorization = `Bearer ${ONYX.SUPABASE_KEY}`;
+          headers.Prefer = 'return=minimal';
+        }
+        const response = await fetch(endpoint, {
+          method: 'POST', headers, body: JSON.stringify(lead)
         });
         delivered = response.ok;
         if (!delivered) console.warn('Lead endpoint responded', response.status);
