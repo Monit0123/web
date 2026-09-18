@@ -28,11 +28,11 @@ Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`
 
 ### 1. Set the real domain
 
-The site currently uses the placeholder `https://onyxathletic.club` in canonical
+The site currently uses the placeholder `https://trainwithonyx.fwh.is` in canonical
 tags, Open Graph URLs, `robots.txt` and `sitemap.xml`. Replace it everywhere:
 
 ```bash
-grep -rl 'onyxathletic.club' . | xargs sed -i 's|https://onyxathletic.club|https://YOUR-DOMAIN|g'
+grep -rl 'trainwithonyx.fwh.is' . | xargs sed -i 's|https://trainwithonyx.fwh.is|https://YOUR-DOMAIN|g'
 ```
 
 ### 2. Wire up the backend
@@ -78,7 +78,7 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
 - **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=40`. Bump that
+- **Cache busting.** Stylesheet and script are linked as `?v=42`. Bump that
   number whenever you edit `styles.css` or `script.js`.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.

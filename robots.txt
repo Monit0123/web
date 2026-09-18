@@ -3,5 +3,5 @@ Allow: /
 Disallow: /profile.html
 Disallow: /trainers.html
 
-Sitemap: https://onyxathletic.club/sitemap.xml
+Sitemap: https://trainwithonyx.fwh.is/sitemap.xml
 Disallow: /admin.html

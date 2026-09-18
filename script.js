@@ -4,9 +4,16 @@
    Every integration below degrades safely when left blank.
    =========================================================================== */
 const ONYX = {
+  // Presentation mode: keeps payment links and business data safe while owners review the prototype.
+  DEMO_MODE: true,
+
   // Where "Request a call back" leads are POSTed as JSON:
   // { name, phone, source, at }.  Leave '' to use the WhatsApp/email handoff.
   CONTACT_ENDPOINT: '',
+
+  // Supabase public browser config. RLS protects the tables; never put a service-role key here.
+  SUPABASE_URL: 'https://xetcagevubbvxjxinvcf.supabase.co',
+  SUPABASE_KEY: 'sb_publishable_WDE52G7LnSmnFHHL03OuzQ_imM4F12Z',
 
   // Real signup/login API. Leave '' to keep browser-local demo accounts.
   AUTH_ENDPOINT: '',
@@ -433,7 +440,8 @@ if (contactDialog) {
     if (!/^[6-9]\d{9}$/.test(phone)) return showFieldError('Enter a valid 10-digit Indian mobile number.');
     showFieldError('');
 
-    const lead = { name, phone: '+91' + phone, source: window.location.pathname, at: new Date().toISOString() };
+    const valueOf = name => { const field = contactForm.elements[name]; return field ? String(field.value || '').trim() : ''; };
+    const lead = { name, phone: '+91' + phone, source: window.location.pathname, at: new Date().toISOString(), preferredDate: valueOf('preferred-date'), preferredTime: valueOf('preferred-time'), goal: valueOf('goal'), experience: valueOf('experience'), consent: !!contactForm.elements['contact-consent']?.checked };
     try {
       const stored = JSON.parse(localStorage.getItem('onyx-leads') || '[]');
       stored.push(lead);
@@ -441,10 +449,17 @@ if (contactDialog) {
     } catch (error) { console.warn('Could not store lead locally.', error); }
 
     let delivered = false;
-    if (ONYX.CONTACT_ENDPOINT) {
+    if (ONYX.CONTACT_ENDPOINT || (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY)) {
       try {
-        const response = await fetch(ONYX.CONTACT_ENDPOINT, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lead)
+        const endpoint = ONYX.CONTACT_ENDPOINT || `${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads`;
+        const headers = { 'Content-Type': 'application/json' };
+        if (!ONYX.CONTACT_ENDPOINT) {
+          headers.apikey = ONYX.SUPABASE_KEY;
+          headers.Authorization = `Bearer ${ONYX.SUPABASE_KEY}`;
+          headers.Prefer = 'return=minimal';
+        }
+        const response = await fetch(endpoint, {
+          method: 'POST', headers, body: JSON.stringify(lead)
         });
         delivered = response.ok;
         if (!delivered) console.warn('Lead endpoint responded', response.status);
@@ -455,21 +470,37 @@ if (contactDialog) {
     // letting it die in localStorage. WhatsApp first, email as the fallback.
     if (!delivered) {
       const message = `Hi ONYX, please call me back.\n\nName: ${name}\nPhone: +91 ${phone}\nPage: ${window.location.pathname}`;
-      const whatsapp = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}`;
       const handoff = contactSuccess.querySelector('.contact-handoff') || (() => {
         const el = document.createElement('p');
         el.className = 'contact-handoff';
         contactSuccess.querySelector('.contact-echo').after(el);
         return el;
       })();
-      handoff.innerHTML =
-        `<a class="handoff-primary" href="${whatsapp}" target="_blank" rel="noopener">Send it on WhatsApp</a>` +
-        `<a href="tel:${ONYX.PHONE}">Call ${ONYX.PHONE}</a>` +
-        `<a href="mailto:${ONYX.EMAIL}?subject=${encodeURIComponent('Call back request — ' + name)}&body=${encodeURIComponent(message)}">Email us</a>`;
-      window.open(whatsapp, '_blank', 'noopener');
+      if (ONYX.DEMO_MODE) {
+        handoff.textContent = 'Demo only — this request stayed in this browser and was not sent to the gym.';
+      } else {
+        const whatsapp = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent(message)}`;
+        handoff.innerHTML =
+          `<a class="handoff-primary" href="${whatsapp}" target="_blank" rel="noopener">Send it on WhatsApp</a>` +
+          `<a href="tel:${ONYX.PHONE}">Call ${ONYX.PHONE}</a>` +
+          `<a href="mailto:${ONYX.EMAIL}?subject=${encodeURIComponent('Call back request — ' + name)}&body=${encodeURIComponent(message)}">Email us</a>`;
+        window.open(whatsapp, '_blank', 'noopener');
+      }
     }
 
     contactEcho.textContent = `${name.toUpperCase()} · +91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
+    const successEyebrow = contactSuccess.querySelector('.eyebrow');
+    const successTitle = contactSuccess.querySelector('.contact-success-title');
+    const successCopy = contactSuccess.querySelector('.plans-confirmation-copy');
+    if (delivered) {
+      if (successEyebrow) successEyebrow.textContent = 'Request received';
+      if (successTitle) successTitle.innerHTML = 'You’re on<br /><em>our list.</em>';
+      if (successCopy) successCopy.textContent = 'Our team will reach out within 24 hours to confirm your preferred slot.';
+    } else {
+      if (successEyebrow) successEyebrow.textContent = 'One last step';
+      if (successTitle) successTitle.innerHTML = 'Send it to<br /><em>ONYX.</em>';
+      if (successCopy) successCopy.textContent = 'Your request is ready. Please use WhatsApp, call, or email below so a coach can confirm your slot. Nothing is booked until a human confirms it.';
+    }
     contactForm.reset();
     contactMain.hidden = true;
     contactSuccess.hidden = false;
@@ -541,6 +572,36 @@ const saveCurrentUser = record => {
   const users = readUsers();
   users[record.email] = record;
   writeUsers(users);
+};
+
+const supabaseHeaders = token => ({
+  'Content-Type': 'application/json',
+  apikey: ONYX.SUPABASE_KEY,
+  Authorization: `Bearer ${token || ONYX.SUPABASE_KEY}`
+});
+const supabaseAuth = async (mode, email, password, name) => {
+  if (!ONYX.SUPABASE_URL || !ONYX.SUPABASE_KEY) return null;
+  const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+  const path = mode === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password';
+  const response = await fetch(base + path, {
+    method: 'POST', headers: supabaseHeaders(),
+    body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('Supabase email limit reached. If your account appears in Authentication → Users, wait a minute and use Log in instead. For a dummy project, disable Confirm email to avoid confirmation-email limits.');
+    throw new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+  }
+  const token = payload.access_token;
+  if (!token && mode === 'signup') throw new Error('Account created, but email confirmation is required before you can log in.');
+  const user = payload.user || {};
+  let profile = {};
+  if (token && user.id) {
+    const profileResponse = await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=full_name,phone,role`, { headers: { ...supabaseHeaders(token), Accept: 'application/json' } });
+    const profiles = await profileResponse.json().catch(() => []);
+    profile = profiles[0] || {};
+  }
+  return { email: user.email || email, name: profile.full_name || name || email.split('@')[0], id: user.id, token, role: profile.role || 'member' };
 };
 
 // Inject the auth + assessment dialogs once, on every page.
@@ -660,11 +721,11 @@ const beginPaymentFlow = (link, plan) => {
     return;
   }
   const fullPlan = plan.includes('PT') ? plan : `${plan} membership`;
-  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null };
+  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null, demo: !!ONYX.DEMO_MODE };
   user.pendingPayment = payment;                  // pending — NOT an active plan
   saveCurrentUser(user);
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
-  window.open(link, '_blank', 'noopener');
+  if (!ONYX.DEMO_MODE) window.open(link, '_blank', 'noopener');
   showPaymentPending(payment);
   if (document.body.classList.contains('profile-page')) renderProfile();
 };
@@ -682,12 +743,13 @@ const showPaymentPending = payment => {
     note.className = 'payment-ref';
     confirmation.querySelector('.plans-confirmation-copy').after(note);
   }
-  const nextStep = payment.plan.includes('PT')
-    ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
-    : `we activate your membership as soon as the payment clears. `;
-  note.innerHTML = `Your reference is <strong>${payment.ref}</strong>. Keep it handy — ` +
-    nextStep +
-    `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`;
+  const nextStep = ONYX.DEMO_MODE
+    ? `This is a presentation demo — no payment was taken and no membership was activated. `
+    : (payment.plan.includes('PT')
+      ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
+      : `we activate your membership as soon as the payment clears. `);
+  note.innerHTML = `Demo reference <strong>${payment.ref}</strong>. ` + nextStep +
+    (ONYX.DEMO_MODE ? `In the live version this step will open Razorpay and verify the webhook before access is granted.` : `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`);
   main.hidden = true;
   confirmation.hidden = false;
   if (!dialog.open) dialog.showModal();
@@ -737,6 +799,20 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
   if (password.length < 6) return fail('Password needs at least 6 characters.');
   if (authMode === 'signup' && name.length < 2) return fail('Please tell us your name.');
   fail('');
+
+  if (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY) {
+    try {
+      const remote = await supabaseAuth(authMode, email, password, name);
+      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRole: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+      saveCurrentUser(record);
+      localStorage.setItem(SESSION_KEY, email);
+      form.reset(); authDialog.close(); updateAuthLinks(); renderProfile();
+      if (authMode === 'signup') openOnboard(); else runPendingAction();
+      return;
+    } catch (error) {
+      return fail(error.message || 'Could not connect to the demo account service.');
+    }
+  }
 
   const users = readUsers();
   if (authMode === 'signup') {
@@ -1055,7 +1131,7 @@ document.querySelectorAll('[data-pt-plan]').forEach(button => button.addEventLis
    Demo storage: dashboard data lives on the member's user record in
    localStorage until the backend endpoints replace it (see README).
    =========================================================================== */
-ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@onyxathletic.club'].
+ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@trainwithonyx.fwh.is'].
 
 const ONYX_PROGRAMS = [
   { id: 'onyx-engine', name: 'Fat Loss Engine', goal: 'lose', official: true, builtin: true, author: 'ONYX Coaching Team', week: [
@@ -4553,8 +4629,7 @@ const renderAvail = coach => {
    Auto-SMS/email/push and real payment capture need the backend.
    =========================================================================== */
 ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
-const isAdmin = user => !!user && Array.isArray(ONYX.ADMIN_EMAILS) &&
-  ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
+const isAdmin = user => !!user && (user.supabaseRole === 'admin' || user.supabaseRole === 'manager' || (Array.isArray(ONYX.ADMIN_EMAILS) && ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase())));
 const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isManager(user) ? 'manager' : isCoach(user) ? 'coach' : 'member';
 const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
@@ -5245,3 +5320,94 @@ updateAuthLinks();
 renderProfile();
 renderCoach();
 renderAdmin();
+
+/* Launch UX enhancements -------------------------------------------------- */
+(() => {
+  const body = document.body;
+  const isPrivate = body.classList.contains('profile-page') || body.classList.contains('admin-page') || body.classList.contains('coach-page');
+  const phone = ONYX.PHONE || '+917973960144';
+  const whatsapp = ONYX.WHATSAPP || phone.replace(/\D/g, '');
+
+  if (ONYX.DEMO_MODE && !document.querySelector('.demo-banner')) {
+    const banner = document.createElement('aside');
+    banner.className = 'demo-banner';
+    banner.setAttribute('role', 'note');
+    banner.innerHTML = '<strong>DEMO PRESENTATION</strong><span>Sample content and browser-only data — not a live membership or booking system.</span>';
+    document.body.prepend(banner);
+  }
+
+  // Give all public landing pages the same thumb-friendly primary actions.
+  if (!isPrivate && !document.querySelector('.mobile-action-bar')) {
+    const bar = document.createElement('nav');
+    bar.className = 'mobile-action-bar';
+    bar.setAttribute('aria-label', 'Quick actions');
+    bar.innerHTML = `<a href="tel:${phone}" aria-label="Call ONYX">☎ <span>Call</span></a><a href="https://wa.me/${whatsapp}" target="_blank" rel="noopener" aria-label="Message ONYX on WhatsApp">◌ <span>WhatsApp</span></a><button type="button" data-open-contact aria-label="Book a free trial">＋ <span>Book trial</span></button>`;
+    document.body.appendChild(bar);
+    bar.querySelector('[data-open-contact]')?.addEventListener('click', () => document.getElementById('contact-dialog')?.showModal());
+  }
+
+  // A simple member-app navigation layer: the detailed sections remain available below.
+  if (body.classList.contains('profile-page') && !document.querySelector('.member-bottom-nav')) {
+    const nav = document.createElement('nav');
+    nav.className = 'member-bottom-nav';
+    nav.setAttribute('aria-label', 'Member app navigation');
+    nav.innerHTML = `<a href="#profile-today"><b>⌂</b><span>Today</span></a><a href="#profile-training"><b>▤</b><span>Plan</span></a><a href="#profile-progress"><b>◉</b><span>Progress</span></a><a href="#profile-coach"><b>✦</b><span>Coach</span></a><a href="#profile-more"><b>⋯</b><span>More</span></a>`;
+    document.body.appendChild(nav);
+  }
+
+  // Do not silently pretend the app is online or that a request was delivered.
+  const setNetworkState = online => {
+    let banner = document.querySelector('.network-status');
+    if (online) { banner?.remove(); return; }
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'network-status';
+      banner.setAttribute('role', 'status');
+      banner.textContent = 'You are offline. Saved demo data stays on this device; new requests need internet.';
+      document.body.prepend(banner);
+    }
+  };
+  window.addEventListener('offline', () => setNetworkState(false));
+  window.addEventListener('online', () => setNetworkState(true));
+  if (!navigator.onLine) setNetworkState(false);
+
+  // Keyboard trap for native modal dialogs; Escape remains a native close action.
+  document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled])')].filter(el => !el.closest('[hidden]'));
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }));
+})();
+
+// Demo privacy controls: make the browser-only nature of the prototype actionable.
+(() => {
+  const exportButton = document.getElementById('pf-export');
+  const deleteButton = document.getElementById('pf-delete-device');
+  const safeUser = () => {
+    const user = currentUser();
+    if (!user) return null;
+    const copy = JSON.parse(JSON.stringify(user));
+    delete copy.password; delete copy.hash; delete copy.salt;
+    return copy;
+  };
+  exportButton?.addEventListener('click', () => {
+    const data = safeUser();
+    if (!data) return;
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), member: data }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'onyx-my-data.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  deleteButton?.addEventListener('click', () => {
+    if (!window.confirm('Delete ONYX demo data from this device? This cannot be undone.')) return;
+    localStorage.clear(); sessionStorage.clear(); window.location.href = 'index.html';
+  });
+})();
+
+// Installable shell for the demo. Private/member data is deliberately not cached by the service worker.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
