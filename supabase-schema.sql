@@ -133,3 +133,16 @@ create policy "authenticated write audit" on public.audit_events for insert with
 -- Optional: set your own user to admin after signing up. Replace the email.
 -- update public.profiles set role = 'admin'
 -- where id = (select id from auth.users where email = 'owner@example.com');
+
+-- Payment verification ledger — written ONLY by the verify-payment edge
+-- function (service role). One payment_id may activate one membership, ever.
+-- No RLS policies on purpose: browser roles must not read or write it.
+create table if not exists public.payment_verifications (
+  payment_id text primary key,
+  email text,
+  ref text,
+  plan text not null,
+  amount integer not null,
+  verified_at timestamptz not null default now()
+);
+alter table public.payment_verifications enable row security;

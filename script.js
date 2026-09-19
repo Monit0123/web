@@ -19,9 +19,10 @@ const ONYX = {
   AUTH_ENDPOINT: '',
 
   // Server route that verifies a Razorpay payment against the Payments API and
-  // returns { active: true, plan: '...' }.  ** Until this is set, no membership
-  // is ever activated in the browser ** — see beginPaymentFlow() below.
-  MEMBERSHIP_VERIFY_ENDPOINT: '',
+  // returns { active: true, plan: '...' }. ** Until this is deployed, no
+  // membership is ever activated in the browser ** — see beginPaymentFlow()
+  // and supabase/functions/verify-payment/index.ts (deploy steps: SUPABASE_SETUP.md).
+  MEMBERSHIP_VERIFY_ENDPOINT: 'https://xetcagevubbvxjxinvcf.supabase.co/functions/v1/verify-payment',
 
   // Fallback contact channels used when CONTACT_ENDPOINT is blank.
   WHATSAPP: '917973960144',
@@ -730,16 +731,33 @@ const runPendingAction = () => {
   }
 };
 /* ---------------------------------------------------------------------------
-   Payment flow — FIXED v52: auto confirmation works with AND without backend
-   - If MEMBERSHIP_VERIFY_ENDPOINT is set: secure server verification (production)
-   - If not set: local auto-confirm on Razorpay return status=paid OR manual verify
-   - Adds Verify button + auto-activate + Supabase sync if available
+   Payment flow — v70: NO client-side activation (free-membership exploit fix).
+   - Production: a membership activates ONLY when the server endpoint
+     (MEMBERSHIP_VERIFY_ENDPOINT) verifies the payment against Razorpay and
+     returns { active: true }. There is deliberately NO fallback to
+     browser-side confirmation, even when Razorpay reports status=paid.
+   - No endpoint configured: payment stays PENDING until the owner confirms it
+     in Admin → Members → "Set plan". The UI tells the user exactly that.
+   - DEMO_MODE (presentation only): simulates activation locally, labeled demo.
    --------------------------------------------------------------------------- */
 const paymentRef = () => 'ONYX-' + Date.now().toString(36).toUpperCase() + '-' +
   Math.random().toString(36).slice(2, 6).toUpperCase();
 
+// Only plans that actually have a payment link can be activated — a forged
+// plan name (e.g. smuggled in a URL parameter) can never mint a membership.
+const isValidPlanName = name => {
+  const n = String(name || '').trim();
+  if (!n) return false;
+  const base = n.replace(/ membership$/, '');
+  return Object.keys(PAYMENT_LINKS).some(key => key === n || key === base);
+};
+
 const activateMembership = (user, payment, source = 'local') => {
   if (!user || !payment) return false;
+  if (!isValidPlanName(payment.plan)) {
+    console.warn('Refused membership activation for unknown plan:', payment.plan);
+    return false;
+  }
   user.plan = payment.plan;
   user.activatedAt = new Date().toISOString();
   user.expiresAt = addMonths(new Date(), planMonths(user.plan)).toISOString();
@@ -775,39 +793,36 @@ const activateMembership = (user, payment, source = 'local') => {
   return true;
 };
 
+// Activation policy: the browser is NOT trusted with payments.
+// - DEMO_MODE: local simulation (clearly labeled demo, for owner presentations).
+// - MEMBERSHIP_VERIFY_ENDPOINT set: activate only on the server's explicit
+//   { active: true }. A failed response or unreachable endpoint keeps the
+//   payment PENDING — never a client-side fallback.
+// - Neither set: return false. Only the owner (Admin → Members → "Set plan")
+//   can activate after manually confirming the Razorpay payment.
 const verifyMembership = async (user, payment) => {
   if (!user || !payment) return false;
-  // Secure backend path if configured
-  if (ONYX.MEMBERSHIP_VERIFY_ENDPOINT) {
-    try {
-      const response = await fetch(ONYX.MEMBERSHIP_VERIFY_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null })
-      });
-      if (response.ok) {
-        const result = await response.json().catch(() => ({}));
-        if (result && result.active === true) {
-          return activateMembership(user, { ...payment, plan: result.plan || payment.plan }, 'backend');
-        }
-      }
-      // Backend failed but Razorpay says paid — fallback to local if allowed
-      if (payment.reportedStatus === 'paid' || payment.paymentId) {
-        console.warn('Backend verification failed, but Razorpay status is paid — activating locally as fallback');
-        return activateMembership(user, payment, 'backend-fallback');
-      }
-      return false;
-    } catch (error) {
-      console.warn('Verification endpoint unreachable, using local fallback if paid', error);
-      if (payment.reportedStatus === 'paid' || payment.paymentId) {
-        return activateMembership(user, payment, 'network-fallback');
-      }
-      return false;
-    }
+  if (!isValidPlanName(payment.plan)) return false;
+  if (ONYX.DEMO_MODE) {
+    return activateMembership(user, payment, 'demo');
   }
-  // No backend configured — local auto-confirm (for solo dev / demo without server)
-  // This is safe for development; in production set MEMBERSHIP_VERIFY_ENDPOINT
-  return activateMembership(user, payment, 'local-auto');
+  if (!ONYX.MEMBERSHIP_VERIFY_ENDPOINT) return false;
+  try {
+    const response = await fetch(ONYX.MEMBERSHIP_VERIFY_ENDPOINT, {
+      method: 'POST',
+      headers: supabaseHeaders(), // anon-key JWT — verified by Supabase at the function edge
+      body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null })
+    });
+    if (!response.ok) return false;
+    const result = await response.json().catch(() => ({}));
+    if (result && result.active === true) {
+      return activateMembership(user, { ...payment, plan: result.plan || payment.plan }, 'backend');
+    }
+    return false;
+  } catch (error) {
+    console.warn('Payment verification endpoint unreachable — keeping membership pending.', error);
+    return false;
+  }
 };
 
 const beginPaymentFlow = (link, plan) => {
@@ -866,21 +881,24 @@ const showPaymentPending = payment => {
   }
 
   const isPT = payment.plan.includes('PT');
+  const hasServerVerify = !ONYX.DEMO_MODE && !!ONYX.MEMBERSHIP_VERIFY_ENDPOINT;
   const nextStep = ONYX.DEMO_MODE
     ? `This is a presentation demo — no payment was taken. Click Verify to simulate activation.`
     : isPT
       ? `A coach will call you within 24 hours to schedule your sessions once payment clears.`
-      : `We activate your membership as soon as payment clears — auto-confirmation is now enabled.`;
+      : `Our team confirms your payment and activates your plan the moment it clears — it will show up on your profile automatically.`;
 
   note.innerHTML = `Reference <strong>${payment.ref}</strong>. ${nextStep}` +
-    (ONYX.DEMO_MODE ? `` : `<br/><small style="opacity:.7">If Razorpay redirects back with status=paid, we auto-activate instantly. If you closed the tab, click Verify below.</small>`);
+    (ONYX.DEMO_MODE ? `` : hasServerVerify
+      ? `<br/><small style="opacity:.7">If Razorpay redirects back, we verify and activate automatically. If you closed the tab, use the button below.</small>`
+      : `<br/><small style="opacity:.7">If you closed the tab or the payment page looked off, message us on WhatsApp below with your reference — we'll match the payment to your account.</small>`);
 
   // Build action buttons
   actions.innerHTML = '';
   const verifyBtn = document.createElement('button');
   verifyBtn.type = 'button';
   verifyBtn.className = 'solid-button directional-tile';
-  verifyBtn.innerHTML = `<span>${ONYX.MEMBERSHIP_VERIFY_ENDPOINT ? 'Verify payment' : 'I’ve paid — Activate now'}</span><b class="arrow-icon">→</b>`;
+  verifyBtn.innerHTML = `<span>${ONYX.DEMO_MODE ? 'Verify (demo — simulates)' : ONYX.MEMBERSHIP_VERIFY_ENDPOINT ? 'Verify payment' : 'Check payment status'}</span><b class="arrow-icon">→</b>`;
   verifyBtn.onclick = async () => {
     verifyBtn.disabled = true;
     verifyBtn.querySelector('span').textContent = 'Verifying…';
@@ -889,11 +907,6 @@ const showPaymentPending = payment => {
       verifyBtn.querySelector('span').textContent = 'No pending payment';
       setTimeout(() => { verifyBtn.disabled = false; verifyBtn.querySelector('span').textContent = 'Verify payment'; }, 2000);
       return;
-    }
-    // If no paymentId yet, simulate paid for local mode
-    if (!user.pendingPayment.paymentId && !ONYX.MEMBERSHIP_VERIFY_ENDPOINT) {
-      user.pendingPayment.paymentId = 'local_' + Date.now().toString(36);
-      user.pendingPayment.reportedStatus = 'paid';
     }
     const ok = await verifyMembership(user, user.pendingPayment);
     if (ok) {
@@ -907,8 +920,12 @@ const showPaymentPending = payment => {
       renderMembership(user);
     } else {
       verifyBtn.disabled = false;
-      verifyBtn.querySelector('span').textContent = 'Verification failed — try again';
-      note.innerHTML += `<br/><small style="color:#ff6b6b">Could not verify. If you paid, wait 30s and try again, or <a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I paid for ' + payment.plan + ' ref ' + payment.ref)}" target="_blank" rel="noopener">message us on WhatsApp</a> with ref ${payment.ref}.</small>`;
+      const pendingOnly = !ONYX.DEMO_MODE && !ONYX.MEMBERSHIP_VERIFY_ENDPOINT;
+      verifyBtn.querySelector('span').textContent = pendingOnly ? 'Still awaiting confirmation' : 'Verification failed — try again';
+      const waLink = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I paid for ' + payment.plan + ' ref ' + payment.ref)}`;
+      note.innerHTML += pendingOnly
+        ? `<br/><small>Payments can’t self-activate — the front desk confirms it and your plan activates automatically (usually within a few hours). To speed it up, <a href="${waLink}" target="_blank" rel="noopener">message us on WhatsApp</a> with ref ${payment.ref}.</small>`
+        : `<br/><small style="color:#ff6b6b">Could not verify. If you paid, wait 30s and try again, or <a href="${waLink}" target="_blank" rel="noopener">message us on WhatsApp</a> with ref ${payment.ref}.</small>`;
     }
   };
 
@@ -965,22 +982,29 @@ window.addEventListener('DOMContentLoaded', async () => {
             const h3 = confirmation.querySelector('h3');
             if (h3) h3.innerHTML = `Payment<br/><em>confirmed.</em>`;
             const copy = confirmation.querySelector('.plans-confirmation-copy');
-            if (copy) copy.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Auto-confirmed via Razorpay return.`;
+            if (copy) copy.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Verified via Razorpay return.`;
             let note = confirmation.querySelector('.payment-ref');
-            if (note) note.innerHTML = `✅ Auto-confirmed · Ref <strong>${user.lastPayment?.ref}</strong> · Razorpay ID <strong>${esc(String(paymentId || '').slice(0, 24))}</strong>`;
+            if (note) note.innerHTML = `✅ Verified · Ref <strong>${user.lastPayment?.ref}</strong> · Razorpay ID <strong>${esc(String(paymentId || '').slice(0, 24))}</strong>`;
             let actions = confirmation.querySelector('.payment-actions');
             if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b class="arrow-icon" aria-hidden="true">→</b></button>`;
           }
           if (!dialog.open) dialog.showModal();
         }
+      } else if (status === 'abandoned') {
+        // Payment link closed without a captured payment — tell the user plainly.
+        showPaymentPending(user.pendingPayment);
+      } else {
+        // Razorpay says "paid" but the server (or configured verification)
+        // didn't confirm it — keep it PENDING and tell the user plainly.
+        showPaymentPending(user.pendingPayment);
       }
     }
   } else if (status === 'paid' && paymentId) {
-    // Edge: user paid but pending was cleared — try to recover from ref
-    // Look for plan from ref or last attempted plan in URL
-    const plan = params.get('plan') || 'Membership';
-    const recovered = { plan, ref: ref || paymentRef(), paymentId, reportedStatus: status };
-    await verifyMembership(user, recovered);
+    // Razorpay returned "paid" but this account has no pending payment.
+    // We deliberately do NOT try to recover/activate from URL parameters —
+    // without a server check, that is how free memberships get minted.
+    // The user should contact the front desk with their reference.
+    console.warn('Razorpay paid-return without a pending payment — no auto-activation. User should contact the front desk.');
   }
 
   history.replaceState(null, '', window.location.pathname);
