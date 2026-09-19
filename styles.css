@@ -24,7 +24,7 @@
 /* Button arrow alignment and philosophy underline */
 .solid-button b,.ghost-button b,.round-link b{line-height:1;text-align:center;padding:0}.solid-button.is-hovered b,.ghost-button.is-hovered b,.round-link.is-hovered b{background:transparent;color:var(--ink)}.philosophy-link{display:inline-block;position:relative;border-bottom:0;padding-bottom:9px;overflow:hidden}.philosophy-link:after{content:'';position:absolute;bottom:0;left:0;width:100%;height:2px;background:#d6fd38;transform:translateX(-101%);transition:transform .32s cubic-bezier(.77,0,.18,1)}.philosophy-link:hover:after,.philosophy-link:focus-visible:after{transform:translateX(0)}.philosophy-link span{position:relative;z-index:1}
 
-.quote blockquote,.quote-attribution{transition:opacity .18s ease,transform .18s ease}.quote blockquote.is-changing,.quote-attribution.is-changing{opacity:0;transform:translateY(10px)}.manifesto h2{position:relative;width:max-content;max-width:100%;padding-bottom:15px}.manifesto h2:after{content:'';position:absolute;left:0;bottom:0;width:100%;height:2px;background:var(--ink);transform:scaleX(0);transform-origin:left;transition:transform .35s cubic-bezier(.77,0,.18,1)}.manifesto h2:hover:after{transform:scaleX(1)}
+.quote blockquote,.quote-attribution{transition:opacity .18s ease,transform .18s ease}.quote blockquote.is-changing,.quote-attribution.is-changing{opacity:0;transform:translateY(10px)}.manifesto h2{width:max-content;max-width:100%}
 
 /* Reference-style pill controls */
 .hero-actions .solid-button,.hero-actions .ghost-button,.price .reference-pill,.closing .round-link{min-width:240px;height:64px;padding:8px 10px 8px 24px;border-radius:999px;font-size:11px;letter-spacing:.1em}.hero-actions .solid-button b,.hero-actions .ghost-button b,.price .reference-pill b,.closing .round-link b{width:46px;height:46px;font-size:28px;border-width:2px}.hero-actions .solid-button{background:#f3f1ea;border-color:#f3f1ea;color:var(--ink)}.hero-actions .solid-button b{border-color:var(--ink)}.hero-actions .ghost-button{border:2px solid #f3f1ea;color:#f3f1ea}.hero-actions .ghost-button b{border-color:#f3f1ea}.price .reference-pill{display:inline-flex;align-items:center;justify-content:space-between;background:var(--ink);color:#fff;border:2px solid var(--ink);margin-top:41px;text-transform:uppercase;text-decoration:none}.price .reference-pill b{display:grid;place-items:center;border:2px solid #fff;border-radius:50%;font-size:28px;font-weight:400;line-height:1}.price .reference-pill>span{position:relative;z-index:3}.closing .round-link{border:2px solid #f3f1ea;color:#f3f1ea}.closing .round-link b{border-color:#f3f1ea}
@@ -3166,7 +3166,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 
 .member-bottom-nav{display:none}.network-status{position:fixed;z-index:30;top:0;left:0;right:0;background:#ffb347;color:#071616;text-align:center;padding:10px 16px;font:700 10px 'DM Mono';letter-spacing:.04em}.member-bottom-nav b{font-size:17px;display:block;line-height:1.1}.member-bottom-nav span{display:block;margin-top:3px}
 @media(max-width:720px){.profile-page{padding-bottom:78px}.member-bottom-nav{display:flex;position:fixed;z-index:15;left:0;right:0;bottom:0;padding:8px 6px calc(8px + env(safe-area-inset-bottom));background:rgba(4,17,18,.98);border-top:1px solid rgba(232,229,220,.2);justify-content:space-around}.member-bottom-nav a{color:var(--muted);text-decoration:none;text-align:center;min-width:52px;min-height:44px;font:9px 'DM Mono';text-transform:uppercase;letter-spacing:.04em}.member-bottom-nav a:active,.member-bottom-nav a:focus-visible{color:var(--lime)}.member-bottom-nav a[href="#profile-today"]{color:var(--lime)}}
-.pricing-note{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:30px;padding-top:20px;border-top:1px solid rgba(7,22,22,.25);font-size:12px;line-height:1.6}.pricing-note strong{font-size:14px;letter-spacing:-.02em}.pricing-note span{color:#53605a}.pricing-note a{color:inherit}.mobile-action-bar button{font-family:inherit}
+.pricing-note{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:30px;padding-top:20px;border-top:0;font-size:12px;line-height:1.6}.pricing-note strong{font-size:14px;letter-spacing:-.02em}.pricing-note span{color:#53605a}.pricing-note a{color:inherit}.mobile-action-bar button{font-family:inherit}
 @media(max-width:720px){.pricing-note{grid-template-columns:1fr;gap:10px}}
 .demo-banner{position:relative;z-index:40;display:flex;justify-content:center;align-items:center;gap:14px;min-height:32px;padding:7px 16px;background:#d7ff32;color:#071616;text-align:center;font:9px 'DM Mono';letter-spacing:.06em;text-transform:uppercase}.demo-banner strong{font-weight:800}.demo-banner span{opacity:.78}
 @media(max-width:720px){.demo-banner{display:block;font-size:8px;line-height:1.4;padding:7px 12px}.demo-banner span{display:block}.demo-banner+*{} }
@@ -4023,3 +4023,248 @@ footer a {
   opacity: .5;
   cursor: not-allowed;
 }
+
+/* === FIXES v55: 10 user-reported polish items === */
+
+/* 1. Remove animated underline under "More than a gym" */
+.manifesto h2{position:static!important;padding-bottom:0!important}
+.manifesto h2:after{display:none!important}
+
+/* 2 & 3. Reach out + Talk to a Coach + Method CTA — ensure directional tile fill and arrow */
+.reach-fab{
+  --tile-fill:#0b2020;
+  position:fixed;overflow:hidden;isolation:isolate;
+}
+.reach-fab::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.reach-fab.is-hovered::after{transform:translateX(0)}
+.reach-fab.is-hovered{color:var(--paper)!important}
+.reach-fab > span,.reach-fab > b{position:relative;z-index:3}
+.reach-fab .arrow-icon{width:38px!important;height:38px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 38px!important}
+
+/* 4. FAQ — smooth fluid opening, remove chopped animation and spare line */
+.faq-list{border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.faq details{border-bottom:none;border-top:1px solid var(--line);overflow:hidden;transition:border-color .2s}
+.faq details:first-child{border-top:none}
+.faq details:last-child{border-bottom:none}
+.faq summary{padding:26px 0;transition:color .22s ease}
+.faq summary span{transition:transform .35s cubic-bezier(.16,1,.3,1)}
+.faq-answer{
+  display:grid;grid-template-rows:0fr;
+  opacity:0;transition: grid-template-rows .58s cubic-bezier(.16,1,.3,1), opacity .42s ease;
+}
+.faq details[open] .faq-answer{grid-template-rows:1fr;opacity:1}
+.faq-answer > p{
+  overflow:hidden;min-height:0;
+  font-size:14px;line-height:1.85;color:var(--muted);max-width:70ch;
+  margin:0;padding:0 0 28px;
+  transform:translateY(-6px);transition: transform .48s cubic-bezier(.16,1,.3,1);
+}
+.faq details[open] .faq-answer > p{transform:translateY(0)}
+.faq details[open] summary{color:var(--lime)}
+/* remove double line between last question and CTA */
+.faq .section-cta{border-top:0!important;margin-top:28px!important;padding-top:0!important}
+.faq .section-cta p{color:var(--muted)}
+@media(max-width:720px){.faq summary{font-size:16px;padding:22px 0}.faq-answer > p{padding-bottom:22px}}
+
+/* 5. PT Pay buttons + all site buttons coherent directional schema */
+.pt-book{
+  --tile-fill:#0b2020;
+  position:relative;overflow:hidden;isolation:isolate;
+  display:inline-flex;align-items:center;justify-content:space-between;
+  gap:18px;min-height:56px;padding:8px 10px 8px 22px;
+  border-radius:999px;border:2px solid var(--lime)!important;
+  background:var(--lime)!important;color:var(--ink)!important;
+  font-size:11px!important;font-weight:700!important;letter-spacing:.1em!important;
+  text-transform:uppercase!important;cursor:pointer;font-family:inherit;
+  transition:border-color .22s ease,color .22s ease;
+}
+.pt-book::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.pt-book > span,.pt-book > b{position:relative;z-index:3;transition:transform .22s cubic-bezier(.16,1,.3,1),color .22s ease}
+.pt-book.is-hovered{color:var(--paper)!important;border-color:var(--tile-fill)!important}
+.pt-book.is-hovered::after{transform:translateX(0)}
+.pt-book.is-hovered > span{transform:scale(1.02)}
+.pt-book .arrow-icon{width:38px!important;height:38px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 38px!important}
+.pt-book .arrow-icon:before{width:72%!important;height:72%!important;left:14%!important;top:14%!important}
+
+/* 5b — trial pill coherent with same schema */
+.trial-cta{
+  --tile-fill:var(--lime);
+  position:relative;overflow:hidden;isolation:isolate;
+  display:inline-flex;align-items:center;justify-content:space-between;
+  gap:24px;min-height:58px;padding:8px 10px 8px 24px;
+  border-radius:999px;border:2px solid var(--ink)!important;
+  background:var(--ink)!important;color:#fff!important;
+  font-size:11px!important;font-weight:700!important;letter-spacing:.1em!important;
+  text-transform:uppercase!important;
+  transition:border-color .22s ease,color .22s ease;
+}
+.trial-cta::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.trial-cta > span,.trial-cta > b{position:relative;z-index:3;transition:transform .22s cubic-bezier(.16,1,.3,1),color .22s ease}
+.trial-cta.is-hovered{color:var(--ink)!important;border-color:var(--lime)!important}
+.trial-cta.is-hovered::after{transform:translateX(0)}
+.trial-cta .arrow-icon{width:42px!important;height:42px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 42px!important}
+
+/* 6 is pricing-note already fixed above — ensure single line */
+.pricing-note{margin-top:22px!important;padding-top:18px!important;border-top:0!important}
+.price-card{border-bottom:1px solid #89938b}
+
+/* 7. Visit actions — pill directional tiles with arrows */
+.visit-actions{display:flex;gap:12px;flex-wrap:wrap;margin:34px 0}
+.visit-actions a,.visit-actions button{
+  --tile-fill:var(--lime);
+  position:relative;overflow:hidden;isolation:isolate;
+  display:inline-flex;align-items:center;justify-content:space-between;
+  gap:18px;min-height:52px;padding:8px 10px 8px 20px;
+  border-radius:999px;text-decoration:none;
+  text-transform:uppercase;font:700 10px 'DM Mono'!important;letter-spacing:.12em!important;
+  cursor:pointer;transition:border-color .22s ease,color .22s ease;
+}
+.visit-actions a{
+  background:transparent!important;color:var(--paper)!important;
+  border:1px solid rgba(232,229,220,.35)!important;
+  --tile-fill:var(--lime);
+}
+.visit-actions button{
+  background:var(--lime)!important;color:var(--ink)!important;
+  border:2px solid var(--lime)!important;
+  --tile-fill:#0b2020;
+}
+.visit-actions a::after,.visit-actions button::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.visit-actions a.is-hovered::after,.visit-actions button.is-hovered::after{transform:translateX(0)}
+.visit-actions a.is-hovered{color:var(--ink)!important;border-color:var(--lime)!important}
+.visit-actions button.is-hovered{color:var(--paper)!important;border-color:var(--tile-fill)!important}
+.visit-actions a > span,.visit-actions a > b,.visit-actions button > span,.visit-actions button > b{position:relative;z-index:3;transition:transform .22s cubic-bezier(.16,1,.3,1)}
+.visit-actions a.is-hovered > span,.visit-actions button.is-hovered > span{transform:scale(1.02)}
+.visit-actions .arrow-icon{width:36px!important;height:36px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 36px!important}
+.visit-actions .arrow-icon:before{width:72%!important;height:72%!important;left:14%!important;top:14%!important}
+
+/* 8. Rahul rebuild image — recenter, correct crop */
+.transform-card img{
+  width:100%;height:380px;object-fit:cover;object-position:center 18%!important;
+  display:block;filter:saturate(.92);
+}
+.transform-grid .transform-card:nth-child(3) img{
+  object-position:center 16%!important;
+  filter:saturate(.92) contrast(1.02);
+}
+@media(max-width:900px){.transform-card img{height:420px}}
+
+/* 9. Method — Book a free Trial button placement, now inside copy */
+.method{grid-template-columns:1.1fr .9fr;background:#cbd4cd;color:var(--ink);align-items:stretch}
+.method-image{min-height:730px}
+.method-copy{padding:8vw;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.method-copy .section-cta{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:18px;margin-top:36px;padding-top:22px;
+  border-top:1px solid rgba(7,22,22,.12)!important;
+  flex-wrap:wrap;
+}
+.method-copy .section-cta p{
+  margin:0!important;color:rgba(7,22,22,.55)!important;
+  font:10px 'DM Mono'!important;letter-spacing:.1em!important;text-transform:uppercase!important;
+}
+.method-copy .solid-button{
+  --tile-fill:#0b2020;
+  min-width:210px;height:52px;padding:7px 10px 7px 20px;
+  border-radius:999px;border:2px solid var(--ink)!important;
+  background:var(--ink)!important;color:#fff!important;
+  font-size:11px!important;letter-spacing:.1em!important;
+  position:relative;overflow:hidden;isolation:isolate;
+}
+.method-copy .solid-button::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.method-copy .solid-button.is-hovered{color:#fff!important;border-color:#0b2020!important}
+.method-copy .solid-button.is-hovered::after{transform:translateX(0)}
+.method-copy .solid-button > span,.method-copy .solid-button > b{position:relative;z-index:3}
+.method-copy .solid-button .arrow-icon{width:36px!important;height:36px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 36px!important}
+@media(max-width:720px){
+  .method{grid-template-columns:1fr}
+  .method-image{min-height:450px}
+  .method-copy{padding:85px 6vw}
+  .method-copy .section-cta{flex-direction:column;align-items:flex-start}
+  .method-copy .solid-button{width:100%;justify-content:space-between}
+}
+
+/* 10. Explore more moments — fix arrow rotation, keep coherent pill */
+.memory-explore{
+  --tile-fill:#d6fd38;
+  position:relative;overflow:hidden;isolation:isolate;
+}
+.memory-explore::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .48s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.memory-explore.is-hovered::after{transform:translateX(0)}
+.memory-explore.is-hovered{color:var(--ink)!important;border-color:var(--tile-fill)!important}
+.memory-explore > span,.memory-explore > b{position:relative;z-index:2}
+.memory-explore .arrow-icon{width:42px!important;height:42px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 42px!important}
+.memory-explore .arrow-icon:before{width:72%!important;height:72%!important;left:14%!important;top:14%!important}
+.memory-explore.is-hovered b{transform:translateX(2px) scale(1.05)!important}
+.memory-explore.is-open b{transform:rotate(180deg)!important}
+.memory-explore.is-open.is-hovered b{transform:rotate(180deg) scale(1.05)!important}
+
+/* Coherence: unify all directional-tile pills — same fill timing, pill radius, arrow circle */
+.hero-actions .solid-button,.hero-actions .ghost-button,.price .reference-pill,.closing .round-link,
+.schedule-cta .solid-button,.faq .solid-button{
+  --tile-fill:#d6fd38;
+  position:relative;overflow:hidden;isolation:isolate;
+  border-radius:999px!important;
+}
+.hero-actions .solid-button::after,.hero-actions .ghost-button::after,.price .reference-pill::after,.closing .round-link::after,
+.schedule-cta .solid-button::after,.faq .solid-button::after{
+  content:'';position:absolute;inset:0;background:var(--tile-fill);
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);
+  z-index:1;pointer-events:none;
+}
+.hero-actions .solid-button.is-hovered::after,.hero-actions .ghost-button.is-hovered::after,.price .reference-pill.is-hovered::after,.closing .round-link.is-hovered::after,
+.schedule-cta .solid-button.is-hovered::after,.faq .solid-button.is-hovered::after{transform:translateX(0)}
+
+/* Trust CTA arrow pill (was plain text) */
+.trust-cta{
+  display:inline-flex;align-items:center;gap:10px;
+  position:relative;overflow:hidden;isolation:isolate;
+  padding:6px 6px 6px 14px;border-radius:999px;
+  border:1px solid transparent;transition:color .22s,border-color .22s;
+}
+.trust-cta .arrow-icon{
+  width:28px!important;height:28px!important;
+  border:1.5px solid currentColor!important;border-radius:50%!important;flex:0 0 28px!important;
+}
+.trust-cta.directional-tile::after{
+  content:'';position:absolute;inset:0;background:#071616;
+  transform:translateX(-101%);transition:transform .42s cubic-bezier(.77,0,.18,1);z-index:1;pointer-events:none;
+}
+.trust-cta.directional-tile.is-hovered{color:#fff!important;border-color:#071616!important}
+.trust-cta.directional-tile.is-hovered::after{transform:translateX(0)}
+.trust-cta > span,.trust-cta > b{position:relative;z-index:3}
+
+/* Pillar small arrows ensure mask */
+.pillar small .arrow-icon{width:19px!important;height:16px!important;vertical-align:middle!important;margin-left:11px!important}
+.pillar small .arrow-icon:before{width:76%!important;height:76%!important;left:18%!important;top:10%!important}
+
+/* Ways list arrows as circles */
+.ways-list .arrow-icon{
+  width:32px!important;height:32px!important;
+  border:1.5px solid currentColor!important;border-radius:50%!important;flex:0 0 32px!important;
+}
+.ways-list a.is-hovered{color:var(--ink)!important}
