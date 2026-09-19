@@ -8,6 +8,8 @@ do $$ begin
   create type public.user_role as enum ('member', 'coach', 'admin', 'manager');
 exception when duplicate_object then null; end $$;
 
+alter type public.user_role add value if not exists 'trainer';
+
 do $$ begin
   create type public.booking_status as enum ('requested', 'confirmed', 'cancelled', 'completed');
 exception when duplicate_object then null; end $$;
@@ -20,6 +22,14 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists active_plan text;
+alter table public.profiles add column if not exists membership_expires_at timestamptz;
+alter table public.profiles add column if not exists last_payment_ref text;
+alter table public.profiles add column if not exists last_payment_id text;
+alter table public.profiles add column if not exists assigned_coach_email text;
+alter table public.profiles add column if not exists suspended boolean not null default false;
+alter table public.profiles add column if not exists app_data jsonb not null default '{}'::jsonb;
 
 create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
@@ -35,6 +45,10 @@ create table if not exists public.leads (
   status text not null default 'new',
   created_at timestamptz not null default now()
 );
+
+alter table public.leads add column if not exists plan text;
+alter table public.leads add column if not exists follow_up date;
+alter table public.leads add column if not exists notes text;
 
 create table if not exists public.bookings (
   id uuid primary key default gen_random_uuid(),
@@ -79,7 +93,16 @@ create index if not exists memberships_member_idx on public.memberships(member_i
 
 create or replace function public.is_staff()
 returns boolean language sql security definer stable set search_path = public
-as $$ select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin','manager','coach')); $$;
+as $$ select exists (select 1 from public.profiles where id = auth.uid() and role::text in ('admin','manager','coach','trainer')); $$;
+
+
+create or replace function public.is_admin_manager()
+returns boolean language sql security definer stable set search_path = public
+as $$ select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin','manager')); $$;
+
+create or replace function public.is_admin()
+returns boolean language sql security definer stable set search_path = public
+as $$ select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin'); $$;
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public
@@ -112,6 +135,8 @@ drop policy if exists "staff can read leads" on public.leads;
 create policy "staff can read leads" on public.leads for select using (public.is_staff());
 drop policy if exists "staff can update leads" on public.leads;
 create policy "staff can update leads" on public.leads for update using (public.is_staff()) with check (public.is_staff());
+drop policy if exists "staff can delete leads" on public.leads;
+create policy "staff can delete leads" on public.leads for delete using (public.is_staff());
 
 drop policy if exists "public can create bookings" on public.bookings;
 create policy "public can create bookings" on public.bookings for insert with check (true);
@@ -130,6 +155,57 @@ create policy "staff read audit" on public.audit_events for select using (public
 drop policy if exists "authenticated write audit" on public.audit_events;
 create policy "authenticated write audit" on public.audit_events for insert with check (actor_id = auth.uid());
 
+create table if not exists public.inventory_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  price integer not null default 0,
+  stock integer not null default 0,
+  sold integer not null default 0,
+  threshold integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.staff_directory (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  role text not null,
+  phone text,
+  salary integer not null default 0,
+  hours text,
+  days text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.site_content (
+  id integer primary key,
+  payload jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+insert into public.site_content (id, payload)
+values (1, '{}'::jsonb)
+on conflict (id) do nothing;
+
+alter table public.inventory_items enable row level security;
+alter table public.staff_directory enable row level security;
+alter table public.site_content enable row level security;
+
+drop policy if exists "admin-managers read inventory" on public.inventory_items;
+create policy "admin-managers read inventory" on public.inventory_items for select using (public.is_admin_manager());
+drop policy if exists "admin-managers write inventory" on public.inventory_items;
+create policy "admin-managers write inventory" on public.inventory_items for all using (public.is_admin_manager()) with check (public.is_admin_manager());
+
+drop policy if exists "admins read staff directory" on public.staff_directory;
+create policy "admins read staff directory" on public.staff_directory for select using (public.is_admin());
+drop policy if exists "admins write staff directory" on public.staff_directory;
+create policy "admins write staff directory" on public.staff_directory for all using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "public read site content" on public.site_content;
+create policy "public read site content" on public.site_content for select using (true);
+drop policy if exists "admins write site content" on public.site_content;
+create policy "admins write site content" on public.site_content for all using (public.is_admin()) with check (public.is_admin());
+
 -- Optional: set your own user to admin after signing up. Replace the email.
 -- update public.profiles set role = 'admin'
 -- where id = (select id from auth.users where email = 'owner@example.com');
@@ -145,4 +221,4 @@ create table if not exists public.payment_verifications (
   amount integer not null,
   verified_at timestamptz not null default now()
 );
-alter table public.payment_verifications enable row security;
+alter table public.payment_verifications enable row level security;

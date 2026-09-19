@@ -442,7 +442,37 @@ if (contactDialog) {
     showFieldError('');
 
     const valueOf = name => { const field = contactForm.elements[name]; return field ? String(field.value || '').trim() : ''; };
-    const lead = { name, phone: '+91' + phone, source: window.location.pathname, at: new Date().toISOString(), preferredDate: valueOf('preferred-date'), preferredTime: valueOf('preferred-time'), goal: valueOf('goal'), experience: valueOf('experience'), consent: !!contactForm.elements['contact-consent']?.checked };
+    const goal = valueOf('goal');
+    const capturedAt = new Date().toISOString();
+    const lead = {
+      name,
+      phone: '+91' + phone,
+      source: 'Website',
+      plan: goal || 'General',
+      at: capturedAt,
+      preferredDate: valueOf('preferred-date'),
+      preferredTime: valueOf('preferred-time'),
+      goal,
+      experience: valueOf('experience'),
+      consent: !!contactForm.elements['contact-consent']?.checked,
+      status: 'lead',
+      followUp: '',
+      notes: ''
+    };
+    const supabaseLead = {
+      name,
+      phone: '+91' + phone,
+      source: 'website',
+      plan: goal || 'General',
+      preferred_date: valueOf('preferred-date') || null,
+      preferred_time: valueOf('preferred-time') || null,
+      goal: goal || null,
+      experience: valueOf('experience') || null,
+      consent: !!contactForm.elements['contact-consent']?.checked,
+      status: 'lead',
+      notes: `Page: ${window.location.pathname}`,
+      follow_up: null
+    };
     try {
       const stored = JSON.parse(localStorage.getItem('onyx-leads') || '[]');
       stored.push(lead);
@@ -460,7 +490,7 @@ if (contactDialog) {
           headers.Prefer = 'return=minimal';
         }
         const response = await fetch(endpoint, {
-          method: 'POST', headers, body: JSON.stringify(lead)
+          method: 'POST', headers, body: JSON.stringify(ONYX.CONTACT_ENDPOINT ? lead : supabaseLead)
         });
         delivered = response.ok;
         if (!delivered) console.warn('Lead endpoint responded', response.status);
@@ -573,6 +603,7 @@ const saveCurrentUser = record => {
   const users = readUsers();
   users[record.email] = record;
   writeUsers(users);
+  syncRecordToSupabase(record);
 };
 
 const supabaseHeaders = token => ({
@@ -580,6 +611,89 @@ const supabaseHeaders = token => ({
   apikey: ONYX.SUPABASE_KEY,
   Authorization: `Bearer ${token || ONYX.SUPABASE_KEY}`
 });
+
+const stripSupabaseAppData = record => {
+  const copy = JSON.parse(JSON.stringify(record || {}));
+  ['pass', 'salt', 'algo', 'supabaseToken', 'supabaseRole', 'supabaseId', '_adminSource', '_sharedSyncedAt', 'pendingPayment'].forEach(key => { delete copy[key]; });
+  ['name', 'email', 'phone', 'role', 'plan', 'expiresAt', 'activatedAt', 'assignedCoach', 'suspended'].forEach(key => { delete copy[key]; });
+  return copy;
+};
+const mergeSupabaseMember = (record, profile, membership) => {
+  const appData = profile && profile.app_data && typeof profile.app_data === 'object' ? JSON.parse(JSON.stringify(profile.app_data)) : {};
+  const next = { ...(record || {}), ...appData };
+  next.name = (profile && profile.full_name) || next.name || next.email || '';
+  next.phone = (profile && profile.phone) || next.phone || '';
+  next.role = (profile && profile.role) || next.role || 'member';
+  next.supabaseRole = (profile && profile.role) || next.supabaseRole || next.role || 'member';
+  next.assignedCoach = (profile && profile.assigned_coach_email) || next.assignedCoach || null;
+  next.suspended = !!(profile && profile.suspended);
+  next.plan = (membership && membership.plan) || (profile && profile.active_plan) || next.plan || null;
+  next.activatedAt = normalizeSupabaseDate((membership && membership.starts_at) || next.activatedAt);
+  next.expiresAt = normalizeSupabaseDate((membership && membership.ends_at) || (profile && profile.membership_expires_at) || next.expiresAt);
+  next.lastPayment = next.lastPayment || {};
+  if (profile && profile.last_payment_ref) next.lastPayment.ref = profile.last_payment_ref;
+  if (profile && profile.last_payment_id) next.lastPayment.paymentId = profile.last_payment_id;
+  if (membership && membership.status === 'pending' && next.plan) {
+    next.pendingPayment = { plan: next.plan, ref: membership.payment_reference || (profile && profile.last_payment_ref) || '' };
+  } else {
+    next.pendingPayment = null;
+  }
+  return next;
+};
+const syncRecordToSupabase = async record => {
+  const actor = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && actor && actor.supabaseToken && record && record.supabaseId)) return;
+  const actorRole = String(actor.supabaseRole || actor.role || '').toLowerCase();
+  const canWrite = actor.supabaseId === record.supabaseId || ['admin', 'manager', 'trainer'].includes(actorRole);
+  if (!canWrite) return;
+  const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+  const payload = {
+    full_name: record.name || '',
+    phone: record.phone || null,
+    assigned_coach_email: record.assignedCoach || null,
+    suspended: !!record.suspended,
+    active_plan: record.plan || null,
+    membership_expires_at: record.expiresAt || null,
+    last_payment_ref: record.lastPayment && record.lastPayment.ref ? record.lastPayment.ref : null,
+    last_payment_id: record.lastPayment && record.lastPayment.paymentId ? record.lastPayment.paymentId : null,
+    app_data: stripSupabaseAppData(record)
+  };
+  try {
+    await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(record.supabaseId)}`, {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(actor.supabaseToken), Prefer: 'return=minimal' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) { console.warn('Supabase profile sync failed.', error); }
+};
+const syncCurrentUserFromSupabase = async () => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseId && user.supabaseToken)) return null;
+  const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+  try {
+    const [profileRes, membershipRes] = await Promise.all([
+      fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}&select=id,full_name,phone,role,assigned_coach_email,suspended,app_data,active_plan,membership_expires_at,last_payment_ref,last_payment_id`, {
+        headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+      }),
+      fetch(`${base}/rest/v1/memberships?member_id=eq.${encodeURIComponent(user.supabaseId)}&select=plan,status,starts_at,ends_at,payment_reference,created_at&order=created_at.desc&limit=1`, {
+        headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+      })
+    ]);
+    if (!profileRes.ok) return null;
+    const profiles = await profileRes.json().catch(() => []);
+    const memberships = membershipRes.ok ? await membershipRes.json().catch(() => []) : [];
+    const profile = profiles[0];
+    if (!profile) return null;
+    const merged = mergeSupabaseMember(user, profile, memberships[0] || null);
+    const users = readUsers();
+    users[merged.email] = merged;
+    writeUsers(users);
+    return merged;
+  } catch (error) {
+    console.warn('Supabase self sync failed.', error);
+    return null;
+  }
+};
 
 const supabaseAuth = async (mode, email, password, name) => {
   if (!ONYX.SUPABASE_URL || !ONYX.SUPABASE_KEY) return null;
@@ -1049,6 +1163,15 @@ const handlePostAuth = (user, opts = {}) => {
   renderProfile();
   renderCoach();
   renderAdmin();
+  if (user && user.supabaseToken) {
+    syncCurrentUserFromSupabase().then(() => {
+      updateAuthLinks();
+      renderProfile();
+      renderCoach();
+      renderAdmin();
+    });
+    if (canAccessTrainer(user)) loadAdminSupabaseMembers(true);
+  }
   const role = roleOf(user);
   // Role-based auto-routing: staff should land in their own dashboard, never member upsell
   if (role === 'admin' || role === 'manager') {
@@ -3293,7 +3416,7 @@ const renderCoachSection = user => {
 let activeClientEmail = null;
 
 const getMember = email => { const users = readUsers(); return users[email] || null; };
-const saveMember = m => { const users = readUsers(); users[m.email] = m; writeUsers(users); };
+const saveMember = m => { const users = readUsers(); users[m.email] = m; writeUsers(users); syncRecordToSupabase(m); };
 const memberStatus = m => {
   if (!m.plan) return m.pendingPayment ? `PENDING · ${String(m.pendingPayment.plan).toUpperCase()}` : 'NO PLAN';
   const left = m.expiresAt ? Math.ceil((new Date(m.expiresAt) - Date.now()) / 86400000) : null;
@@ -3465,6 +3588,9 @@ const renderCoach = () => {
     gate.hidden = false; dash.hidden = true; roster.hidden = true; detail.hidden = true;
     renderCoachGate(user);
     return;
+  }
+  if (user.supabaseToken && (!adminSupabaseState.loaded || adminSupabaseState.token !== user.supabaseToken) && !adminSupabaseState.loading) {
+    loadAdminSupabaseMembers();
   }
   gate.hidden = true;
   if (activeClientEmail && getMember(activeClientEmail)) {
@@ -5182,19 +5308,76 @@ const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 m
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
 const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
 const LEADS_KEY = 'onyx-leads';
+let adminLeadsState = { loading: false, loaded: false, error: '', leads: [] };
 const normLead = l => ({
   id: l.id || ('l' + Math.random().toString(36).slice(2, 9)),
   name: l.name || 'Unknown', phone: l.phone || '',
   source: /^\//.test(l.source || '') ? 'Website' : (l.source || 'Website'),
   plan: l.plan || 'General',
-  status: ['lead', 'contacted', 'trial', 'joined'].includes(l.status) ? l.status : 'lead',
-  followUp: l.followUp || '', notes: l.notes || '', at: l.at || new Date().toISOString()
+  status: ['lead', 'contacted', 'trial', 'joined', 'new'].includes(l.status) ? (l.status === 'new' ? 'lead' : l.status) : 'lead',
+  followUp: l.followUp || l.follow_up || '', notes: l.notes || '', at: l.at || l.created_at || new Date().toISOString(),
+  _remote: !!l._remote
 });
 const readLeads = () => {
   try { return (JSON.parse(localStorage.getItem(LEADS_KEY) || '[]') || []).map(normLead); }
   catch (err) { return []; }
 };
 const writeLeads = l => localStorage.setItem(LEADS_KEY, JSON.stringify(l));
+const remoteLead = row => normLead({
+  id: row.id,
+  name: row.name,
+  phone: row.phone,
+  source: row.source,
+  plan: row.plan,
+  status: row.status,
+  follow_up: row.follow_up,
+  notes: row.notes,
+  created_at: row.created_at,
+  _remote: true
+});
+const adminLeadsNotice = () => {
+  if (adminLeadsState.loading) return '<p class="coach-demo-note">Syncing shared leads from Supabase…</p>';
+  if (adminLeadsState.error) return `<p class="coach-demo-note">Shared lead sync unavailable (${esc(adminLeadsState.error)}). Falling back to this browser's local leads.</p>`;
+  if (adminLeadsState.loaded) return '<p class="coach-demo-note">Showing shared Supabase leads across devices.</p>';
+  return '';
+};
+const adminLeadRoster = () => adminLeadsState.loaded && !adminLeadsState.error ? adminLeadsState.leads : readLeads();
+const loadAdminLeads = async (force = false) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken && canAccessAdmin(user))) return adminLeadRoster();
+  if (!force && adminLeadsState.loading) return adminLeadsState.leads;
+  if (!force && adminLeadsState.loaded) return adminLeadsState.leads;
+  adminLeadsState = { ...adminLeadsState, loading: true, error: '' };
+  try {
+    const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads?select=id,name,phone,source,plan,status,follow_up,notes,created_at&order=created_at.desc`, {
+      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+    adminLeadsState = { loading: false, loaded: true, error: '', leads: (payload || []).map(remoteLead) };
+  } catch (error) {
+    adminLeadsState = { ...adminLeadsState, loading: false, loaded: true, error: error && error.message ? error.message : 'sync failed' };
+  }
+  if (document.body.classList.contains('admin-page')) renderAdmin();
+  return adminLeadsState.leads;
+};
+const writeLeadRemote = async (method, pathSuffix = '', body = null) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared lead sync is not configured');
+  const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads${pathSuffix}`, {
+    method,
+    headers: {
+      ...supabaseHeaders(user.supabaseToken),
+      Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
+      Accept: 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ([]));
+  if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+  await loadAdminLeads(true);
+  return payload;
+};
 const memberActive = m => !!m.plan && (!m.expiresAt || String(m.expiresAt).slice(0, 10) >= dayKey());
 const daysLeft = m => {
   if (!m.plan || !m.expiresAt) return null;
@@ -5205,8 +5388,202 @@ const waLink = (phone, text) => {
   const n = waNum(phone);
   return n.length === 10 ? `https://wa.me/91${n}?text=${encodeURIComponent(text)}` : null;
 };
+const adminMembersEndpoint = () => ONYX.SUPABASE_URL
+  ? `${ONYX.SUPABASE_URL.replace(/\/$/, '')}/functions/v1/admin-members`
+  : '';
+const adminMemberWriteEndpoint = () => ONYX.SUPABASE_URL
+  ? `${ONYX.SUPABASE_URL.replace(/\/$/, '')}/functions/v1/admin-member-write`
+  : '';
 let adminTab = 'members';
 let adminMember = null;
+let adminSupabaseState = { token: '', loading: false, loaded: false, error: '', members: [] };
+
+const localAdminMember = raw => {
+  if (!raw || !raw.email) return null;
+  return {
+    ...raw,
+    id: raw.supabaseId || raw.email,
+    name: raw.name || raw.email,
+    phone: raw.phone || '',
+    role: raw.supabaseRole || raw.role || roleOf(raw),
+    supabaseRole: raw.supabaseRole || raw.role || roleOf(raw),
+    createdAt: raw.createdAt || null,
+    _adminSource: 'local'
+  };
+};
+
+const normalizeSupabaseDate = value => {
+  if (!value) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? `${value}T00:00:00.000Z` : String(value);
+};
+const remoteAdminMember = raw => ({
+  ...(raw.appData && typeof raw.appData === 'object' ? raw.appData : {}),
+  id: raw.id || raw.email,
+  supabaseId: raw.id || null,
+  email: raw.email || '',
+  name: raw.fullName || raw.name || raw.email || 'Member',
+  phone: raw.phone || '',
+  role: raw.role || 'member',
+  supabaseRole: raw.role || 'member',
+  createdAt: raw.createdAt || null,
+  plan: raw.plan || null,
+  activatedAt: normalizeSupabaseDate(raw.membershipStartsAt),
+  expiresAt: normalizeSupabaseDate(raw.membershipEndsAt),
+  membershipStatus: raw.membershipStatus || (raw.plan ? 'active' : 'none'),
+  paymentReference: raw.paymentReference || null,
+  assignedCoach: raw.assignedCoachEmail || (raw.appData && raw.appData.assignedCoach) || null,
+  suspended: !!raw.suspended,
+  pendingPayment: raw.membershipStatus === 'pending' && raw.plan ? { plan: raw.plan, ref: raw.paymentReference || '' } : null,
+  _adminSource: 'supabase'
+});
+
+const adminSharedReady = () => adminSupabaseState.loaded && !adminSupabaseState.error;
+const adminHasSharedMembers = () => adminSharedReady() && adminSupabaseState.members.length > 0;
+const adminMembersNotice = () => {
+  if (adminSupabaseState.loading) return '<p class="coach-demo-note">Syncing shared members from Supabase…</p>';
+  if (adminSupabaseState.error) return `<p class="coach-demo-note">Shared Supabase member sync is unavailable (${esc(adminSupabaseState.error)}). Falling back to this browser's demo data.</p>`;
+  if (adminHasSharedMembers()) return '<p class="coach-demo-note">Showing shared Supabase users across devices. Create member, role, plan, renew, confirm payment, and delete now sync through Supabase. Browser-only demo accounts created without shared sync still stay on that device.</p>';
+  if (adminSupabaseState.loaded) return '<p class="coach-demo-note">Connected to Supabase. Your first member created from this screen will be shared across devices.</p>';
+  return '';
+};
+
+const adminRoster = () => {
+  const map = new Map();
+  (adminSupabaseState.members || []).forEach(member => {
+    if (member && member.email) map.set(member.email, { ...member });
+  });
+  Object.values(readUsers()).forEach(raw => {
+    const local = localAdminMember(raw);
+    if (!local) return;
+    const existing = map.get(local.email);
+    if (!existing) { map.set(local.email, local); return; }
+    map.set(local.email, {
+      ...local,
+      ...existing,
+      plan: existing.plan || local.plan || null,
+      expiresAt: existing.expiresAt || local.expiresAt || null,
+      activatedAt: existing.activatedAt || local.activatedAt || null,
+      membershipStatus: existing.membershipStatus || (local.pendingPayment ? 'pending' : local.plan ? 'active' : 'none'),
+      pendingPayment: existing.membershipStatus === 'pending'
+        ? (existing.pendingPayment || local.pendingPayment || null)
+        : null,
+      assignedCoach: local.assignedCoach || null,
+      visits: local.visits || [],
+      checkins: local.checkins || [],
+      goals: local.goals || [],
+      sessions: local.sessions || [],
+      _adminSource: 'hybrid'
+    });
+  });
+  return [...map.values()].sort((a, b) => {
+    const ad = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bd = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (bd !== ad) return bd - ad;
+    return String(a.name || a.email).localeCompare(String(b.name || b.email));
+  });
+};
+
+const shadowSharedMembers = members => {
+  const users = readUsers();
+  let changed = false;
+  (members || []).forEach(member => {
+    if (!member || !member.email) return;
+    const existing = users[member.email] || {};
+    const merged = {
+      ...existing,
+      ...member,
+      email: member.email,
+      name: member.name || existing.name || member.email,
+      supabaseId: member.supabaseId || existing.supabaseId || null,
+      role: member.supabaseRole || member.role || existing.role || 'member',
+      supabaseRole: member.supabaseRole || member.role || existing.supabaseRole || 'member',
+      phone: member.phone || existing.phone || '',
+      assignedCoach: member.assignedCoach || existing.assignedCoach || null,
+      suspended: typeof member.suspended === 'boolean' ? member.suspended : !!existing.suspended,
+      _sharedSyncedAt: new Date().toISOString()
+    };
+    users[member.email] = merged;
+    changed = true;
+  });
+  if (changed) writeUsers(users);
+};
+
+const loadAdminSupabaseMembers = async (force = false) => {
+  const user = currentUser();
+  const token = user && user.supabaseToken ? user.supabaseToken : '';
+  const endpoint = adminMembersEndpoint();
+  if (!user || !token || !endpoint || !canAccessTrainer(user)) return [];
+  if (!force && adminSupabaseState.loading) return adminSupabaseState.members;
+  if (!force && adminSupabaseState.loaded && adminSupabaseState.token === token) return adminSupabaseState.members;
+  adminSupabaseState = { ...adminSupabaseState, token, loading: true, error: '' };
+  try {
+    const response = await fetch(endpoint, {
+      headers: {
+        apikey: ONYX.SUPABASE_KEY,
+        Authorization: `Bearer ${token}`
+      }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    adminSupabaseState = {
+      token,
+      loading: false,
+      loaded: true,
+      error: '',
+      members: (payload.members || []).map(remoteAdminMember)
+    };
+    shadowSharedMembers(adminSupabaseState.members);
+  } catch (error) {
+    adminSupabaseState = {
+      ...adminSupabaseState,
+      token,
+      loading: false,
+      loaded: true,
+      error: error && error.message ? error.message : 'sync failed'
+    };
+  }
+  if (document.body.classList.contains('admin-page')) renderAdmin();
+  if (document.body.classList.contains('coach-page')) renderCoach();
+  if (document.body.classList.contains('profile-page')) renderProfile();
+  return adminSupabaseState.members;
+};
+
+
+const updateLocalAdminShadow = (email, patcher) => {
+  const users = readUsers();
+  if (!users[email]) return;
+  const next = patcher == null
+    ? null
+    : typeof patcher === 'function'
+      ? patcher({ ...users[email] })
+      : { ...users[email], ...patcher };
+  if (!next) { delete users[email]; }
+  else users[email] = next;
+  writeUsers(users);
+};
+
+const remoteAdminMemberWrite = async (action, payload = {}) => {
+  const user = currentUser();
+  const endpoint = adminMemberWriteEndpoint();
+  if (!user || !user.supabaseToken || !endpoint) throw new Error('shared admin write is not configured');
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: ONYX.SUPABASE_KEY,
+      Authorization: `Bearer ${user.supabaseToken}`
+    },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
+  await loadAdminSupabaseMembers(true);
+  return data;
+};
+
+const shouldUseRemoteAdminWrite = member => !!(member && (member._adminSource === 'supabase' || member._adminSource === 'hybrid') && adminSharedReady());
 
 const renderAdmin = () => {
   if (!document.body.classList.contains('admin-page')) return;
@@ -5230,22 +5607,43 @@ const renderAdmin = () => {
         box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. Need admin/manager. Check Supabase profiles.role or ADMIN_EMAILS config.</p>`;
       }
       const logoutGate = document.getElementById('admin-logout-gate');
-      if (logoutGate) logoutGate.addEventListener('click', () => { localStorage.removeItem(SESSION_KEY); updateAuthLinks(); renderAdmin(); });
+      if (logoutGate) logoutGate.addEventListener('click', () => {
+        localStorage.removeItem(SESSION_KEY);
+        adminSupabaseState = { token: '', loading: false, loaded: false, error: '', members: [] };
+        updateAuthLinks();
+        renderAdmin();
+      });
     }
     return;
+  }
+  if (user.supabaseToken && adminMembersEndpoint() && (!adminSupabaseState.loaded || adminSupabaseState.token !== user.supabaseToken) && !adminSupabaseState.loading) {
+    loadAdminSupabaseMembers();
+  }
+  if (user.supabaseToken && adminTab === 'leads' && !adminLeadsState.loading && !adminLeadsState.loaded) {
+    loadAdminLeads();
+  }
+  if (user.supabaseToken && adminTab === 'inv' && !adminInvState.loading && !adminInvState.loaded) {
+    loadAdminInventory();
+  }
+  if (user.supabaseToken && adminTab === 'staff' && !adminStaffState.loading && !adminStaffState.loaded) {
+    loadAdminStaff();
+  }
+  if (adminTab === 'site' && !siteSharedState.loading && !siteSharedState.loaded) {
+    loadRemoteSiteContent();
   }
   gate.hidden = true; dash.hidden = false; main.hidden = false;
   document.getElementById('admin-title').innerHTML = `Namaste,<br /><em>${esc(user.name.split(' ')[0])}.</em>`;
   const roleLabel = roleOf(user).toUpperCase();
-  document.getElementById('admin-sub').textContent = `${user.email} · ${roleLabel} · ${dayKey()}`;
-  const members = Object.values(readUsers()).filter(u => u && isMember(u));
+  const syncLabel = adminSharedReady() ? ' · SUPABASE SYNCED' : adminSupabaseState.loading ? ' · SYNCING…' : adminSupabaseState.error ? ' · LOCAL FALLBACK' : '';
+  document.getElementById('admin-sub').textContent = `${user.email} · ${roleLabel} · ${dayKey()}${syncLabel}`;
+  const members = adminRoster().filter(member => roleOf(member) === 'member');
   const today = dayKey();
   const active = members.filter(memberActive);
   const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
   const pending = members.filter(m => m.pendingPayment).reduce((a, m) => a + (PLAN_PRICES[(m.pendingPayment || {}).plan] || 0), 0);
   const new30 = members.filter(m => m.createdAt && (Date.now() - new Date(m.createdAt)) / 86400000 <= 30).length;
   const expiring = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; }).length;
-  const todayAtt = members.reduce((a, m) => a + (m.visits || []).filter(v => String(v.at || '').slice(0, 10) === today).length, 0);
+  const todayAtt = members.reduce((a, m) => a + ((m.visits || []).filter(v => String(v.at || '').slice(0, 10) === today).length), 0);
   document.getElementById('admin-stats').innerHTML = [
     [inr(revenue), 'REVENUE · ACTIVE PLANS'], [inr(pending), 'PENDING PAYMENTS'],
     [active.length, 'ACTIVE MEMBERS'], [new30, 'NEW · 30 DAYS'],
@@ -5267,6 +5665,10 @@ const renderAdmin = () => {
   document.getElementById('adm-staff').hidden = adminTab !== 'staff';
   document.getElementById('adm-reports').hidden = adminTab !== 'reports';
   document.getElementById('adm-site').hidden = adminTab !== 'site';
+  const addToggle = document.getElementById('mm-add-toggle');
+  if (addToggle) addToggle.title = adminSharedReady()
+    ? 'When Supabase sync is active this form creates shared members across devices.'
+    : '';
   if (adminTab === 'members') renderAdminMembers();
   if (adminTab === 'leads') renderAdminLeads();
   if (adminTab === 'reminders') renderAdminReminders();
@@ -5280,23 +5682,25 @@ const refreshAdmin = () => renderAdmin();
 const renderAdminMembers = () => {
   const q = (document.getElementById('mm-search').value || '').toLowerCase();
   const pf = document.getElementById('mm-plan').value;
-  let members = Object.values(readUsers()).filter(u => u && u.email);
+  let members = adminRoster();
   if (q) members = members.filter(m => `${m.name} ${m.email} ${m.phone || ''}`.toLowerCase().includes(q));
   if (pf === 'none') members = members.filter(m => !m.plan);
   else if (pf === 'exp') members = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; });
   else if (pf) members = members.filter(m => m.plan === pf);
-  document.getElementById('mm-list').innerHTML = members.length ? members.map(m => {
+  const note = adminMembersNotice();
+  document.getElementById('mm-list').innerHTML = note + (members.length ? members.map(m => {
     const d = daysLeft(m);
-    const st = m.suspended ? '⛔ SUSPENDED' : memberActive(m) ? `ACTIVE${d !== null ? ` · ${d}D LEFT` : ''}` : m.plan ? 'EXPIRED' : (m.pendingPayment ? 'PENDING PAYMENT' : 'NO PLAN');
+    const st = m.suspended ? '⛔ SUSPENDED' : memberActive(m) ? `ACTIVE${d !== null ? ` · ${d}D LEFT` : ''}` : m.plan ? (m.membershipStatus === 'pending' ? 'PENDING' : 'EXPIRED') : (m.pendingPayment ? 'PENDING PAYMENT' : 'NO PLAN');
     const r = roleOf(m);
-    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''} · ${esc(r.toUpperCase())}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)} · ${esc(m.email)}</span></button>`;
-  }).join('') : '<p class="log-empty">No members match.</p>';
+    const source = m._adminSource === 'supabase' ? 'SUPABASE' : m._adminSource === 'hybrid' ? 'SUPABASE + LOCAL' : 'BROWSER ONLY';
+    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''} · ${esc(r.toUpperCase())}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)} · ${esc(m.email)} · ${source}</span></button>`;
+  }).join('') : '<p class="log-empty">No members match.</p>');
   renderMemberPanel();
 };
 
 const renderMemberPanel = () => {
   const box = document.getElementById('mm-panel');
-  const m = adminMember ? getMember(adminMember) : null;
+  const m = adminMember ? adminMemberRecord(adminMember) : null;
   if (!m) { box.innerHTML = adminMember ? '' : '<p class="log-empty">Select a member to manage.</p>'; return; }
   const users = readUsers();
   const coachName = m.assignedCoach && users[m.assignedCoach] ? users[m.assignedCoach].name : '—';
@@ -5304,6 +5708,23 @@ const renderMemberPanel = () => {
   const last = visits.length ? fmtDate(visits[visits.length - 1].at) : 'Never';
   const pend = m.pendingPayment;
   const currentRole = roleOf(m);
+  const shared = m._adminSource === 'supabase' || m._adminSource === 'hybrid';
+  if (shared) {
+    const pendingShared = m.membershipStatus === 'pending' && m.plan;
+    box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)} · ${esc(currentRole.toUpperCase())}</h3>` +
+      `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · SOURCE: ${esc(m._adminSource === 'hybrid' ? 'SUPABASE + LOCAL CACHE' : 'SUPABASE SHARED')}</p>` +
+      `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · STATUS: ${esc(String((m.membershipStatus || (memberActive(m) ? 'active' : 'none')).toUpperCase()))} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · CREATED: ${m.createdAt ? esc(fmtDate(m.createdAt)) : '—'}</p>` +
+      `<p class="coach-demo-note">This member is synced from Supabase and these edits now write back cross-device.</p>` +
+      (pendingShared ? `<p class="csub">⏳ PENDING: ${esc(m.plan)}${m.paymentReference ? ` · REF ${esc(m.paymentReference)}` : ''} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
+      `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
+      `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
+      `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
+      `<div class="crow"><select id="mm-newrole" aria-label="Change role"><option value="member"${currentRole==='member'?' selected':''}>Member</option><option value="trainer"${currentRole==='trainer'?' selected':''}>Trainer</option><option value="manager"${currentRole==='manager'?' selected':''}>Manager</option><option value="admin"${currentRole==='admin'?' selected':''}>Admin</option></select><button type="button" data-act="setrole" data-email="${esc(m.email)}">Set role</button></div>` +
+      `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
+      (waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`)}">WhatsApp</a>` : '') + `</div>` +
+      `</div>`;
+    return;
+  }
   box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''} · ${esc(currentRole.toUpperCase())}</h3>` +
     `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · LV ${levelOf(pointsOf(m)).n} · ${visits.length} VISITS · STREAK ${calcStreak(m.checkins)} · LAST ${esc(String(last)).toUpperCase()}</p>` +
     `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())} · ROLE: ${esc(currentRole.toUpperCase())}</p>` +
@@ -5317,20 +5738,21 @@ const renderMemberPanel = () => {
 };
 
 const renderAdminLeads = () => {
-  const leads = readLeads();
+  const leads = adminLeadRoster();
   const n = s => leads.filter(l => l.status === s).length;
   const conv = leads.length ? ((n('joined') / leads.length) * 100).toFixed(1) : '0.0';
   document.getElementById('ld-stats').innerHTML =
     [[leads.length, 'TOTAL'], [n('lead'), 'NEW'], [n('contacted'), 'CONTACTED'], [n('trial'), 'TRIAL'], [n('joined'), 'JOINED'], [`${conv}%`, 'CONVERSION']]
       .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
-  document.getElementById('ld-list').innerHTML = leads.length ? [...leads].reverse().map(l =>
+  const note = adminLeadsNotice();
+  document.getElementById('ld-list').innerHTML = note + (leads.length ? [...leads].reverse().map(l =>
     `<div class="adm-row"><strong>${esc(l.name)} · ${esc(l.phone || 'no phone')}</strong>` +
-    `<span>${esc(l.source)} · wants ${esc(l.plan)} · ${esc(fmtDate(l.at))}</span>` +
+    `<span>${esc(l.source)} · wants ${esc(l.plan)} · ${esc(fmtDate(l.at))}${l._remote ? ' · SUPABASE' : ' · LOCAL'}</span>` +
     `<span class="adm-lead-ctl"><select data-lead-status="${l.id}" aria-label="Status">${['lead', 'contacted', 'trial', 'joined'].map(s => `<option value="${s}"${l.status === s ? ' selected' : ''}>${s.toUpperCase()}</option>`).join('')}</select>` +
     `<input type="date" data-lead-follow="${l.id}" value="${esc(l.followUp || '')}" aria-label="Follow-up date" />` +
     (waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`)}">WA</a>` : '') +
     `<button type="button" data-lead-del="${l.id}" aria-label="Delete lead">×</button></span></div>`
-  ).join('') : '<p class="log-empty">No leads yet — contact-form enquiries land here automatically.</p>';
+  ).join('') : '<p class="log-empty">No leads yet — contact-form enquiries land here automatically.</p>');
 };
 
 const renderAdminReminders = () => {
@@ -5375,6 +5797,7 @@ const renderAdminReminders = () => {
   if (logout) logout.addEventListener('click', () => {
     localStorage.removeItem(SESSION_KEY);
     adminMember = null;
+    adminSupabaseState = { token: '', loading: false, loaded: false, error: '', members: [] };
     updateAuthLinks();
     renderAdmin();
   });
@@ -5401,20 +5824,28 @@ const renderAdminReminders = () => {
     const plan = form.elements.plan.value || null;
     const pw = form.elements.password.value;
     if (name.length < 2 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || pw.length < 6) return;
-    const users = readUsers();
-    if (users[email]) return;
-    const { algo, salt, hash } = await hashPassword(pw);
-    users[email] = {
-      name, email, algo, salt, pass: hash, phone: phone.length === 10 ? phone : '',
-      createdAt: new Date().toISOString(), onboarded: false, profile: null,
-      plan, expiresAt: plan ? new Date(Date.now() + (PLAN_DAYS[plan] || 30) * 86400000).toISOString() : null,
-      pendingPayment: null
-    };
-    writeUsers(users);
-    form.reset();
-    form.hidden = true;
-    adminMember = email;
-    renderAdmin();
+    try {
+      if (adminSharedReady()) {
+        await remoteAdminMemberWrite('create_member', { name, email, phone, password: pw, plan });
+      } else {
+        const users = readUsers();
+        if (users[email]) return;
+        const { algo, salt, hash } = await hashPassword(pw);
+        users[email] = {
+          name, email, algo, salt, pass: hash, phone: phone.length === 10 ? phone : '',
+          createdAt: new Date().toISOString(), onboarded: false, profile: null,
+          plan, expiresAt: plan ? new Date(Date.now() + (PLAN_DAYS[plan] || 30) * 86400000).toISOString() : null,
+          pendingPayment: null
+        };
+        writeUsers(users);
+      }
+      form.reset();
+      form.hidden = true;
+      adminMember = email;
+      renderAdmin();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not create member');
+    }
   });
   document.getElementById('mm-list').addEventListener('click', event => {
     const row = event.target.closest('[data-mm]');
@@ -5422,114 +5853,180 @@ const renderAdminReminders = () => {
     adminMember = row.dataset.mm;
     renderAdminMembers();
   });
-  document.getElementById('admin-main').addEventListener('click', event => {
+  document.getElementById('admin-main').addEventListener('click', async event => {
     const btn = event.target.closest('[data-act]');
     if (!btn) return;
-    const m = getMember(btn.dataset.email);
+    const m = adminMemberRecord(btn.dataset.email) || getMember(btn.dataset.email);
     if (!m) return;
-    if (isAdminStrict(m) && roleOf(m) === 'admin') {
-      // Prevent deleting strict admin via member panel — use staff management or Supabase
-      if (btn.dataset.act === 'delmember') return;
-    }
+    if (isAdminStrict(m) && roleOf(m) === 'admin' && btn.dataset.act === 'delmember') return;
     const me = currentUser();
-    if (btn.dataset.act === 'delmember') {
-      if (!isAdminStrict(currentUser())) return;
-      if (me && me.email === m.email) return;
-      if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
-      const users = readUsers();
-      delete users[m.email];
-      writeUsers(users);
-      if (adminMember === m.email) adminMember = null;
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'suspend') {
-      m.suspended = !m.suspended;
-      saveMember(m);
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'renew') {
-      const mo = parseInt(btn.dataset.mo, 10) || 1;
-      const base = m.expiresAt && new Date(m.expiresAt) > new Date() ? new Date(m.expiresAt) : new Date();
-      base.setDate(base.getDate() + mo * 30);
-      m.expiresAt = base.toISOString();
-      pushNotif(m, '✅', `Membership renewed — active till ${fmtDate(m.expiresAt)}.`);
-      saveMember(m);
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'setplan') {
-      const sel = document.getElementById('mm-newplan');
-      m.plan = sel ? sel.value || null : m.plan;
-      if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + (PLAN_DAYS[m.plan] || 30) * 86400000).toISOString();
-      saveMember(m);
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'setcoach') {
-      const sel = document.getElementById('mm-newcoach');
-      m.assignedCoach = sel && sel.value ? sel.value : null;
-      saveMember(m);
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'setrole') {
-      const sel = document.getElementById('mm-newrole');
-      const newRole = sel ? sel.value : 'member';
-      if (!['member','trainer','manager','admin'].includes(newRole)) return;
-      // Prevent non-admin from creating admin
-      if (newRole === 'admin' && !isAdminStrict(currentUser())) {
-        alert('Only admin can assign admin role');
+    const remote = shouldUseRemoteAdminWrite(m);
+    try {
+      if (btn.dataset.act === 'delmember') {
+        if (!isAdminStrict(currentUser())) return;
+        if (me && me.email === m.email) return;
+        if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
+        if (remote) {
+          await remoteAdminMemberWrite('delete_member', { email: m.email });
+          updateLocalAdminShadow(m.email, null);
+        } else {
+          const users = readUsers();
+          delete users[m.email];
+          writeUsers(users);
+        }
+        if (adminMember === m.email) adminMember = null;
+        renderAdmin();
         return;
       }
-      m.role = newRole;
-      m.supabaseRole = newRole;
-      saveMember(m);
-      renderAdmin();
-      return;
-    }
-    if (btn.dataset.act === 'confirm-pay') {
-      const pend = m.pendingPayment;
-      if (!pend) return;
-      m.plan = pend.plan;
-      m.expiresAt = new Date(Date.now() + (PLAN_DAYS[pend.plan] || 30) * 86400000).toISOString();
-      m.pendingPayment = null;
-      pushNotif(m, '💳', `Payment of ${inr(PLAN_PRICES[pend.plan] || 0)} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
-      saveMember(m);
-      renderAdmin();
+      if (btn.dataset.act === 'suspend') {
+        m.suspended = !m.suspended;
+        saveMember(m);
+        renderAdmin();
+        return;
+      }
+      if (btn.dataset.act === 'renew') {
+        const mo = parseInt(btn.dataset.mo, 10) || 1;
+        if (remote) {
+          await remoteAdminMemberWrite('renew', { email: m.email, months: mo });
+        } else {
+          const base = m.expiresAt && new Date(m.expiresAt) > new Date() ? new Date(m.expiresAt) : new Date();
+          base.setDate(base.getDate() + mo * 30);
+          m.expiresAt = base.toISOString();
+          pushNotif(m, '✅', `Membership renewed — active till ${fmtDate(m.expiresAt)}.`);
+          saveMember(m);
+        }
+        renderAdmin();
+        return;
+      }
+      if (btn.dataset.act === 'setplan') {
+        const sel = document.getElementById('mm-newplan');
+        const plan = sel ? sel.value || null : m.plan;
+        if (remote) {
+          await remoteAdminMemberWrite('set_plan', { email: m.email, plan });
+          updateLocalAdminShadow(m.email, rec => ({ ...rec, pendingPayment: null, plan, expiresAt: plan ? rec.expiresAt : null }));
+        } else {
+          m.plan = plan;
+          if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + (PLAN_DAYS[m.plan] || 30) * 86400000).toISOString();
+          saveMember(m);
+        }
+        renderAdmin();
+        return;
+      }
+      if (btn.dataset.act === 'setcoach') {
+        const sel = document.getElementById('mm-newcoach');
+        m.assignedCoach = sel && sel.value ? sel.value : null;
+        saveMember(m);
+        renderAdmin();
+        return;
+      }
+      if (btn.dataset.act === 'setrole') {
+        const sel = document.getElementById('mm-newrole');
+        const newRole = sel ? sel.value : 'member';
+        if (!['member','trainer','manager','admin'].includes(newRole)) return;
+        if (newRole === 'admin' && !isAdminStrict(currentUser())) {
+          alert('Only admin can assign admin role');
+          return;
+        }
+        if (remote) {
+          await remoteAdminMemberWrite('set_role', { email: m.email, role: newRole });
+          updateLocalAdminShadow(m.email, rec => ({ ...rec, role: newRole, supabaseRole: newRole }));
+        } else {
+          m.role = newRole;
+          m.supabaseRole = newRole;
+          saveMember(m);
+        }
+        renderAdmin();
+        return;
+      }
+      if (btn.dataset.act === 'confirm-pay') {
+        const pend = m.pendingPayment || (m.plan ? { plan: m.plan, ref: m.paymentReference || '' } : null);
+        if (!pend) return;
+        if (remote) {
+          await remoteAdminMemberWrite('confirm_payment', { email: m.email, plan: pend.plan, ref: pend.ref || '' });
+          updateLocalAdminShadow(m.email, rec => ({ ...rec, pendingPayment: null, plan: pend.plan }));
+        } else {
+          m.plan = pend.plan;
+          m.expiresAt = new Date(Date.now() + (PLAN_DAYS[pend.plan] || 30) * 86400000).toISOString();
+          m.pendingPayment = null;
+          pushNotif(m, '💳', `Payment of ${inr(PLAN_PRICES[pend.plan] || 0)} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
+          saveMember(m);
+        }
+        renderAdmin();
+      }
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Action failed');
     }
   });
-  document.getElementById('ld-add').addEventListener('submit', event => {
+  document.getElementById('ld-add').addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.target;
     const name = form.elements.name.value.trim().slice(0, 50);
     const phone = form.elements.phone.value.trim().slice(0, 13);
     if (name.length < 2 || phone.length < 10) return;
-    const leads = readLeads();
-    leads.push(normLead({ name, phone, source: form.elements.source.value, plan: form.elements.plan.value }));
-    writeLeads(leads);
-    form.reset();
-    renderAdminLeads();
+    try {
+      if (adminSharedReady()) {
+        await writeLeadRemote('POST', '', {
+          name,
+          phone,
+          source: String(form.elements.source.value || 'Website').toLowerCase(),
+          plan: form.elements.plan.value || 'General',
+          consent: true,
+          status: 'lead'
+        });
+      } else {
+        const leads = readLeads();
+        leads.push(normLead({ name, phone, source: form.elements.source.value, plan: form.elements.plan.value }));
+        writeLeads(leads);
+      }
+      form.reset();
+      renderAdminLeads();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not add lead');
+    }
   });
-  document.getElementById('ld-list').addEventListener('change', event => {
+  document.getElementById('ld-list').addEventListener('change', async event => {
     const st = event.target.closest('[data-lead-status]');
     const fw = event.target.closest('[data-lead-follow]');
     if (!st && !fw) return;
-    const leads = readLeads();
     const id = (st || fw).dataset.leadStatus || (st || fw).dataset.leadFollow;
+    const leads = adminLeadRoster();
     const lead = leads.find(l => l.id === id);
     if (!lead) return;
-    if (st) lead.status = st.value;
-    if (fw) lead.followUp = fw.value;
-    writeLeads(leads);
-    renderAdminLeads();
+    try {
+      if (lead._remote && adminSharedReady()) {
+        const patch = {};
+        if (st) patch.status = st.value;
+        if (fw) patch.follow_up = fw.value || null;
+        await writeLeadRemote('PATCH', `?id=eq.${encodeURIComponent(id)}`, patch);
+      } else {
+        const local = readLeads();
+        const row = local.find(l => l.id === id);
+        if (!row) return;
+        if (st) row.status = st.value;
+        if (fw) row.followUp = fw.value;
+        writeLeads(local);
+      }
+      renderAdminLeads();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not update lead');
+    }
   });
-  document.getElementById('ld-list').addEventListener('click', event => {
+  document.getElementById('ld-list').addEventListener('click', async event => {
     const del = event.target.closest('[data-lead-del]');
     if (!del) return;
-    writeLeads(readLeads().filter(l => l.id !== del.dataset.leadDel));
-    renderAdminLeads();
+    const leads = adminLeadRoster();
+    const lead = leads.find(l => l.id === del.dataset.leadDel);
+    if (!lead) return;
+    try {
+      if (lead._remote && adminSharedReady()) {
+        await writeLeadRemote('DELETE', `?id=eq.${encodeURIComponent(lead.id)}`);
+      } else {
+        writeLeads(readLeads().filter(l => l.id !== del.dataset.leadDel));
+      }
+      renderAdminLeads();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not delete lead');
+    }
   });
 })();
 
@@ -5540,45 +6037,137 @@ const renderAdminReminders = () => {
 
 /* ---------- inventory ---------- */
 const INV_KEY = 'onyx-inventory';
-const readInv = () => {
+const INV_DEFAULT = [
+  { id: 'p1', name: 'Whey Protein 1kg', price: 2499, stock: 17, sold: 83, threshold: 10 },
+  { id: 'p2', name: 'Creatine 300g', price: 899, stock: 24, sold: 41, threshold: 8 },
+  { id: 'p3', name: 'ONYX Shaker', price: 349, stock: 40, sold: 112, threshold: 15 },
+  { id: 'p4', name: 'Training Gloves', price: 599, stock: 9, sold: 27, threshold: 10 },
+  { id: 'p5', name: 'ONYX T-Shirt', price: 799, stock: 22, sold: 35, threshold: 10 }
+];
+const readInvLocal = () => {
   try { return JSON.parse(localStorage.getItem(INV_KEY) || '[]') || []; }
   catch (err) { return []; }
 };
-const writeInv = v => localStorage.setItem(INV_KEY, JSON.stringify(v));
+const writeInvLocal = v => localStorage.setItem(INV_KEY, JSON.stringify(v));
 const seedInv = () => {
   if (localStorage.getItem(INV_KEY) !== null) return;
-  writeInv([
-    { id: 'p1', name: 'Whey Protein 1kg', price: 2499, stock: 17, sold: 83, threshold: 10 },
-    { id: 'p2', name: 'Creatine 300g', price: 899, stock: 24, sold: 41, threshold: 8 },
-    { id: 'p3', name: 'ONYX Shaker', price: 349, stock: 40, sold: 112, threshold: 15 },
-    { id: 'p4', name: 'Training Gloves', price: 599, stock: 9, sold: 27, threshold: 10 },
-    { id: 'p5', name: 'ONYX T-Shirt', price: 799, stock: 22, sold: 35, threshold: 10 }
-  ]);
+  writeInvLocal(INV_DEFAULT);
+};
+let adminInvState = { loading: false, loaded: false, error: '', items: [] };
+const invRoster = () => (adminInvState.loaded && !adminInvState.error ? adminInvState.items : readInvLocal());
+const adminInvNotice = () => {
+  if (adminInvState.loading) return '<p class="coach-demo-note">Syncing shared inventory from Supabase…</p>';
+  if (adminInvState.error) return `<p class="coach-demo-note">Shared inventory sync unavailable (${esc(adminInvState.error)}). Falling back to this browser's local inventory.</p>`;
+  if (adminInvState.loaded) return '<p class="coach-demo-note">Inventory is shared through Supabase across devices.</p>';
+  return '';
+};
+const loadAdminInventory = async (force = false) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken && isManager(user))) return invRoster();
+  if (!force && adminInvState.loading) return adminInvState.items;
+  if (!force && adminInvState.loaded) return adminInvState.items;
+  adminInvState = { ...adminInvState, loading: true, error: '' };
+  try {
+    const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/inventory_items?select=id,name,price,stock,sold,threshold&order=created_at.asc`, {
+      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+    adminInvState = { loading: false, loaded: true, error: '', items: payload || [] };
+    if ((payload || []).length) writeInvLocal(payload);
+  } catch (error) {
+    adminInvState = { ...adminInvState, loading: false, loaded: true, error: error && error.message ? error.message : 'sync failed' };
+  }
+  if (document.body.classList.contains('admin-page')) renderAdmin();
+  return adminInvState.items;
+};
+const writeInventoryRemote = async (method, pathSuffix = '', body = null) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared inventory sync is not configured');
+  const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/inventory_items${pathSuffix}`, {
+    method,
+    headers: {
+      ...supabaseHeaders(user.supabaseToken),
+      Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
+      Accept: 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ([]));
+  if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+  await loadAdminInventory(true);
+  return payload;
 };
 const renderAdminInv = () => {
   seedInv();
-  const items = readInv();
+  const items = invRoster();
   const units = items.reduce((a, p) => a + (+p.stock || 0), 0);
   const value = items.reduce((a, p) => a + (+p.stock || 0) * (+p.price || 0), 0);
   const low = items.filter(p => (+p.stock || 0) <= (+p.threshold || 0)).length;
   document.getElementById('iv-stats').innerHTML =
     [[items.length, 'SKUS'], [units, 'UNITS IN STOCK'], [inr(value), 'STOCK VALUE'], [low, 'LOW STOCK']]
       .map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
-  document.getElementById('iv-list').innerHTML = items.length ? items.map(p => {
+  const note = adminInvNotice();
+  document.getElementById('iv-list').innerHTML = note + (items.length ? items.map(p => {
     const isLow = (+p.stock || 0) <= (+p.threshold || 0);
     return `<div class="adm-row${isLow ? ' is-low' : ''}"><strong>${isLow ? '⚠️ ' : ''}${esc(p.name)} · ${inr(p.price)}</strong>` +
-      `<span>STOCK: ${+p.stock || 0} · SOLD: ${+p.sold || 0} · LOW AT: ${+p.threshold || 0}</span>` +
+      `<span>STOCK: ${+p.stock || 0} · SOLD: ${+p.sold || 0} · LOW AT: ${+p.threshold || 0}${adminInvState.loaded && !adminInvState.error ? ' · SUPABASE' : ' · LOCAL'}</span>` +
       `<span class="adm-lead-ctl"><button type="button" data-iv-sell="${p.id}">Sell 1</button><button type="button" data-iv-add="${p.id}">+10 stock</button><button type="button" data-iv-del="${p.id}" aria-label="Delete product">×</button></span></div>`;
-  }).join('') : '<p class="log-empty">No products — add your first above.</p>';
+  }).join('') : '<p class="log-empty">No products — add your first above.</p>');
 };
 
 /* ---------- staff + roles ---------- */
 const STAFF_KEY = 'onyx-staff';
-const readStaff = () => {
+const readStaffLocal = () => {
   try { return JSON.parse(localStorage.getItem(STAFF_KEY) || '[]') || []; }
   catch (err) { return []; }
 };
-const writeStaff = v => localStorage.setItem(STAFF_KEY, JSON.stringify(v));
+const writeStaffLocal = v => localStorage.setItem(STAFF_KEY, JSON.stringify(v));
+let adminStaffState = { loading: false, loaded: false, error: '', staff: [] };
+const staffRoster = () => (adminStaffState.loaded && !adminStaffState.error ? adminStaffState.staff : readStaffLocal());
+const adminStaffNotice = () => {
+  if (adminStaffState.loading) return '<p class="coach-demo-note">Syncing shared staff directory from Supabase…</p>';
+  if (adminStaffState.error) return `<p class="coach-demo-note">Shared staff sync unavailable (${esc(adminStaffState.error)}). Falling back to this browser's local records.</p>`;
+  if (adminStaffState.loaded) return '<p class="coach-demo-note">Staff records are shared through Supabase across devices.</p>';
+  return '';
+};
+const loadAdminStaff = async (force = false) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken && isAdminStrict(user))) return staffRoster();
+  if (!force && adminStaffState.loading) return adminStaffState.staff;
+  if (!force && adminStaffState.loaded) return adminStaffState.staff;
+  adminStaffState = { ...adminStaffState, loading: true, error: '' };
+  try {
+    const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/staff_directory?select=id,name,role,phone,salary,hours,days&order=created_at.asc`, {
+      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+    adminStaffState = { loading: false, loaded: true, error: '', staff: payload || [] };
+    if ((payload || []).length) writeStaffLocal(payload);
+  } catch (error) {
+    adminStaffState = { ...adminStaffState, loading: false, loaded: true, error: error && error.message ? error.message : 'sync failed' };
+  }
+  if (document.body.classList.contains('admin-page')) renderAdmin();
+  return adminStaffState.staff;
+};
+const writeStaffRemote = async (method, pathSuffix = '', body = null) => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared staff sync is not configured');
+  const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/staff_directory${pathSuffix}`, {
+    method,
+    headers: {
+      ...supabaseHeaders(user.supabaseToken),
+      Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
+      Accept: 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ([]));
+  if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+  await loadAdminStaff(true);
+  return payload;
+};
 const trainerLoad = () => {
   const members = Object.values(readUsers()).filter(u => u && isMember(u));
   return coachList().map(c => {
@@ -5594,9 +6183,10 @@ const trainerLoad = () => {
   });
 };
 const renderAdminStaff = () => {
-  const staff = readStaff();
+  const staff = staffRoster();
   const load = trainerLoad();
   document.getElementById('st-list').innerHTML =
+    adminStaffNotice() +
     `<div class="perm-table"><strong>ROLE PERMISSIONS</strong><table>` +
     `<tr><th>ROLE</th><th>ACCESS</th></tr>` +
     `<tr><td>Owner</td><td>Everything — all tabs, delete, billing</td></tr>` +
@@ -5608,7 +6198,7 @@ const renderAdminStaff = () => {
     (staff.length ? staff.map(s => {
       const today = (s.days || []).includes(dayKey());
       return `<div class="adm-row"><strong>${esc(s.name)} · ${esc((s.role || '').toUpperCase())}${today ? ' · ✅ PRESENT' : ''}</strong>` +
-        `<span>${esc(s.phone || 'no phone')} · ${inr(s.salary || 0)}/MO · ${esc(s.hours || 'hours?')} · ${(s.days || []).length} DAYS PRESENT</span>` +
+        `<span>${esc(s.phone || 'no phone')} · ${inr(s.salary || 0)}/MO · ${esc(s.hours || 'hours?')} · ${(s.days || []).length} DAYS PRESENT${adminStaffState.loaded && !adminStaffState.error ? ' · SUPABASE' : ' · LOCAL'}</span>` +
         `<span class="adm-lead-ctl"><button type="button" data-st-day="${s.id}">${today ? 'Unmark today' : 'Mark present'}</button><button type="button" data-st-del="${s.id}" aria-label="Remove staff">×</button></span></div>`;
     }).join('') : '<p class="log-empty">No staff records — add trainers, receptionists, managers above.</p>');
 };
@@ -5658,98 +6248,99 @@ const renderAdminReports = () => {
     : '<p class="log-empty">No coaches on this device yet.</p>');
 };
 
-/* ---------- tab-2 events (bound once) ---------- */
-(() => {
-  const main = document.getElementById('admin-main');
-  if (!main) return;
-  document.getElementById('iv-add').addEventListener('submit', event => {
-    event.preventDefault();
-    const form = event.target;
-    const name = form.elements.name.value.trim().slice(0, 60);
-    const price = parseFloat(form.elements.price.value);
-    const stock = parseInt(form.elements.stock.value, 10);
-    const threshold = parseInt(form.elements.threshold.value, 10);
-    if (!name || !(price >= 0) || !(stock >= 0)) return;
-    const items = readInv();
-    items.push({ id: 'p' + Date.now().toString(36), name, price, stock, sold: 0, threshold: threshold >= 0 ? threshold : 5 });
-    writeInv(items);
-    form.reset();
-    renderAdminInv();
-  });
-  document.getElementById('iv-list').addEventListener('click', event => {
-    const sell = event.target.closest('[data-iv-sell]');
-    const add = event.target.closest('[data-iv-add]');
-    const del = event.target.closest('[data-iv-del]');
-    if (!sell && !add && !del) return;
-    const items = readInv();
-    const id = (sell || add || del).dataset.ivSell || (sell || add || del).dataset.ivAdd || (sell || add || del).dataset.ivDel;
-    const p = items.find(x => x.id === id);
-    if (del) { writeInv(items.filter(x => x.id !== id)); renderAdminInv(); return; }
-    if (!p) return;
-    if (sell && (+p.stock || 0) > 0) { p.stock--; p.sold = (+p.sold || 0) + 1; }
-    if (add) p.stock = (+p.stock || 0) + 10;
-    writeInv(items);
-    renderAdminInv();
-  });
-  document.getElementById('st-add').addEventListener('submit', event => {
-    event.preventDefault();
-    const form = event.target;
-    const name = form.elements.name.value.trim().slice(0, 50);
-    if (name.length < 2) return;
-    const staff = readStaff();
-    staff.push({
-      id: 's' + Date.now().toString(36), name, role: form.elements.role.value,
-      phone: form.elements.phone.value.trim().slice(0, 13),
-      salary: parseFloat(form.elements.salary.value) || 0,
-      hours: form.elements.hours.value.trim().slice(0, 30) || '9–5', days: []
-    });
-    writeStaff(staff);
-    form.reset();
-    renderAdminStaff();
-  });
-  document.getElementById('st-list').addEventListener('click', event => {
-    const day = event.target.closest('[data-st-day]');
-    const del = event.target.closest('[data-st-del]');
-    if (!day && !del) return;
-    const staff = readStaff();
-    const id = (day || del).dataset.stDay || (day || del).dataset.stDel;
-    if (del) { writeStaff(staff.filter(x => x.id !== id)); renderAdminStaff(); return; }
-    const s = staff.find(x => x.id === id);
-    if (!s) return;
-    s.days = s.days || [];
-    const k = dayKey();
-    s.days = s.days.includes(k) ? s.days.filter(d => d !== k) : [...s.days, k];
-    writeStaff(staff);
-    renderAdminStaff();
-  });
-})();
-
-/* ===========================================================================
-   MINI CMS (#17) — owner-editable prices, offer, announcement, FAQs, contact.
-   Overrides live in localStorage on this browser; defaults stay in the HTML.
-   Multi-device publishing + media uploads need the backend.
-   =========================================================================== */
+/* ---------- site content ---------- */
 const SITE_KEY = 'onyx-site-content';
-const readSite = () => {
+const readSiteLocal = () => {
   try { return JSON.parse(localStorage.getItem(SITE_KEY) || '{}') || {}; }
   catch (err) { return {}; }
 };
-const writeSite = v => localStorage.setItem(SITE_KEY, JSON.stringify(v));
+const writeSiteLocal = v => localStorage.setItem(SITE_KEY, JSON.stringify(v));
+let siteSharedState = { loading: false, loaded: false, error: '', data: null };
+const siteData = () => (siteSharedState.loaded && !siteSharedState.error && siteSharedState.data ? siteSharedState.data : readSiteLocal());
+const loadRemoteSiteContent = async (force = false) => {
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY)) return siteData();
+  if (!force && siteSharedState.loading) return siteSharedState.data;
+  if (!force && siteSharedState.loaded) return siteSharedState.data;
+  siteSharedState = { ...siteSharedState, loading: true, error: '' };
+  try {
+    const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/site_content?id=eq.1&select=payload`, {
+      headers: {
+        apikey: ONYX.SUPABASE_KEY,
+        Authorization: `Bearer ${ONYX.SUPABASE_KEY}`,
+        Accept: 'application/json'
+      }
+    });
+    const payload = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+    const data = payload && payload[0] && payload[0].payload ? payload[0].payload : {};
+    siteSharedState = { loading: false, loaded: true, error: '', data };
+    writeSiteLocal(data);
+    applySiteContent();
+    renderAdminSite();
+  } catch (error) {
+    siteSharedState = { ...siteSharedState, loading: false, loaded: true, error: error && error.message ? error.message : 'sync failed' };
+  }
+  return siteSharedState.data;
+};
+const saveRemoteSiteContent = async data => {
+  const user = currentUser();
+  if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken && isAdminStrict(user))) throw new Error('shared site content sync is not configured');
+  const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/site_content?id=eq.1`, {
+    method: 'PATCH',
+    headers: {
+      ...supabaseHeaders(user.supabaseToken),
+      Prefer: 'return=minimal'
+    },
+    body: JSON.stringify({ payload: data, updated_at: new Date().toISOString() })
+  });
+  const payload = await response.json().catch(() => ([]));
+  if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
+  siteSharedState = { loading: false, loaded: true, error: '', data };
+  writeSiteLocal(data);
+  applySiteContent();
+  renderAdminSite();
+};
 const SITE_DEFAULT_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const SITE_PLAN_MONTHS = { 'Monthly': 1, '3 months': 3, '6 months': 6, '12 months': 12 };
-
+const siteDefaults = { faqHTML: null, hoursText: null, phoneHref: null, phoneText: null, emailText: null, addressHTML: null };
+const captureSiteDefaults = () => {
+  if (siteDefaults.faqHTML === null) {
+    const list = document.querySelector('#faq .faq-list');
+    siteDefaults.faqHTML = list ? list.innerHTML : null;
+  }
+  if (siteDefaults.hoursText === null) {
+    document.querySelectorAll('.visit-grid > div').forEach(div => {
+      const label = div.querySelector('span');
+      if (label && label.textContent.trim() === 'HOURS') {
+        const p = div.querySelector('p');
+        siteDefaults.hoursText = p ? p.textContent : null;
+      }
+      if (label && label.textContent.trim() === 'CALL US') {
+        const a = div.querySelector('a[href^="tel:"]');
+        siteDefaults.phoneHref = a ? a.getAttribute('href') : null;
+        siteDefaults.phoneText = a ? a.textContent : null;
+      }
+      if (label && label.textContent.trim() === 'EMAIL') {
+        const a = div.querySelector('a[href^="mailto:"]');
+        siteDefaults.emailText = a ? a.textContent : null;
+      }
+      if (label && label.textContent.trim() === 'ADDRESS') {
+        siteDefaults.addressHTML = div.querySelector('p') ? div.querySelector('p').innerHTML : null;
+      }
+    });
+  }
+};
 const applySiteContent = () => {
-  const site = readSite();
-  /* prices → live lookups (revenue, pending amounts) + every plan card */
+  captureSiteDefaults();
+  const site = siteData();
   const prices = site.prices || {};
   Object.keys(SITE_DEFAULT_PRICES).forEach(plan => {
     const val = parseFloat(prices[plan]);
-    if (val > 0) PLAN_PRICES[plan] = Math.round(val);
+    PLAN_PRICES[plan] = val > 0 ? Math.round(val) : SITE_DEFAULT_PRICES[plan];
   });
   document.querySelectorAll('.plan-card[data-plan]').forEach(card => {
     const plan = card.dataset.plan;
-    const val = parseFloat(prices[plan]);
-    if (!(val > 0)) return;
+    const val = PLAN_PRICES[plan];
     const strong = card.querySelector('.plan-price strong');
     if (strong) strong.textContent = inr(val);
     card.dataset.price = inr(val);
@@ -5757,10 +6348,9 @@ const applySiteContent = () => {
     const mo = SITE_PLAN_MONTHS[plan] || 1;
     if (perMo) perMo.textContent = `≈ ${inr(Math.round(val / mo))} / month`;
   });
-  /* offer banner above the membership plans */
   const mem = document.getElementById('membership');
+  let banner = document.getElementById('cms-offer');
   if (mem && site.offer && site.offer.active && site.offer.title) {
-    let banner = document.getElementById('cms-offer');
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'cms-offer';
@@ -5768,67 +6358,81 @@ const applySiteContent = () => {
       mem.prepend(banner);
     }
     banner.innerHTML = `<strong>${esc(site.offer.title)}</strong>${site.offer.text ? `<span>${esc(site.offer.text)}</span>` : ''}`;
+  } else if (banner) {
+    banner.remove();
   }
-  /* site-wide announcement bar */
+  let announce = document.getElementById('cms-announce');
   if (site.announcement && site.announcement.active && site.announcement.text && !sessionStorage.getItem('onyx-ann-x')) {
-    if (!document.getElementById('cms-announce')) {
-      const bar = document.createElement('div');
-      bar.id = 'cms-announce';
-      bar.className = 'cms-announce';
-      bar.innerHTML = `<span>${esc(site.announcement.text)}</span><button type="button" id="cms-announce-x" aria-label="Dismiss">×</button>`;
-      document.body.prepend(bar);
-      document.getElementById('cms-announce-x').addEventListener('click', () => {
-        sessionStorage.setItem('onyx-ann-x', '1');
-        bar.remove();
-      });
+    if (!announce) {
+      announce = document.createElement('div');
+      announce.id = 'cms-announce';
+      announce.className = 'cms-announce';
+      document.body.prepend(announce);
     }
-  }
-  /* FAQ overrides (plain text — links need the HTML file) */
-  if (Array.isArray(site.faqs) && site.faqs.length) {
-    const list = document.querySelector('#faq .faq-list');
-    if (list) list.innerHTML = site.faqs.map(f =>
-      `<details><summary>${esc(f.q)}<span aria-hidden="true"></span></summary><p>${esc(f.a)}</p></details>`).join('');
-  }
-  /* contact overrides */
-  const contact = site.contact || {};
-  if (contact.hours) document.querySelectorAll('.visit-grid > div').forEach(div => {
-    const label = div.querySelector('span');
-    if (label && label.textContent.trim() === 'HOURS') {
-      const p = div.querySelector('p');
-      if (p) p.textContent = contact.hours;
-    }
-  });
-  if (contact.phone) {
-    const digits = String(contact.phone).replace(/\D/g, '');
-    if (digits.length >= 10) {
-      ONYX.WHATSAPP = digits;
-      ONYX.PHONE = '+' + digits;
-      document.querySelectorAll('.visit-grid > div').forEach(div => {
-        const label = div.querySelector('span');
-        if (label && label.textContent.trim() === 'CALL US') {
-          const a = div.querySelector('a[href^="tel:"]');
-          if (a) { a.href = 'tel:+' + digits; a.textContent = '+' + digits.slice(0, 2) + ' ' + digits.slice(2); }
-        }
-      });
-    }
-  }
-  if (contact.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) {
-    document.querySelectorAll('a[href^="mailto:"]').forEach(a => {
-      a.href = 'mailto:' + contact.email;
-      if (a.textContent.includes('@')) a.textContent = contact.email;
+    announce.innerHTML = `<span>${esc(site.announcement.text)}</span><button type="button" id="cms-announce-x" aria-label="Dismiss">×</button>`;
+    document.getElementById('cms-announce-x').addEventListener('click', () => {
+      sessionStorage.setItem('onyx-ann-x', '1');
+      announce.remove();
     });
+  } else if (announce) {
+    announce.remove();
   }
-  if (contact.address) document.querySelectorAll('.visit-grid > div').forEach(div => {
+  const list = document.querySelector('#faq .faq-list');
+  if (list) {
+    if (Array.isArray(site.faqs) && site.faqs.length) list.innerHTML = site.faqs.map(f => `<details><summary>${esc(f.q)}<span aria-hidden="true"></span></summary><p>${esc(f.a)}</p></details>`).join('');
+    else if (siteDefaults.faqHTML !== null) list.innerHTML = siteDefaults.faqHTML;
+  }
+  const contact = site.contact || {};
+  document.querySelectorAll('.visit-grid > div').forEach(div => {
     const label = div.querySelector('span');
-    const p = div.querySelector('p');
-    if (label && label.textContent.trim() === 'ADDRESS' && p && p.firstChild) {
-      p.firstChild.textContent = contact.address + ', ';
+    if (!label) return;
+    const key = label.textContent.trim();
+    if (key === 'HOURS') {
+      const p = div.querySelector('p');
+      if (p) p.textContent = contact.hours || siteDefaults.hoursText || p.textContent;
+    }
+    if (key === 'CALL US') {
+      const a = div.querySelector('a[href^="tel:"]');
+      if (!a) return;
+      if (contact.phone) {
+        const digits = String(contact.phone).replace(/\D/g, '');
+        if (digits.length >= 10) {
+          ONYX.WHATSAPP = digits;
+          ONYX.PHONE = '+' + digits;
+          a.href = 'tel:+' + digits;
+          a.textContent = '+' + digits.slice(0, 2) + ' ' + digits.slice(2);
+        }
+      } else {
+        if (siteDefaults.phoneHref) a.href = siteDefaults.phoneHref;
+        if (siteDefaults.phoneText) a.textContent = siteDefaults.phoneText;
+      }
+    }
+    if (key === 'EMAIL') {
+      const a = div.querySelector('a[href^="mailto:"]');
+      if (!a) return;
+      if (contact.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) {
+        a.href = 'mailto:' + contact.email;
+        a.textContent = contact.email;
+      } else if (siteDefaults.emailText) {
+        a.textContent = siteDefaults.emailText;
+      }
+    }
+    if (key === 'ADDRESS') {
+      const p = div.querySelector('p');
+      if (!p) return;
+      if (contact.address) {
+        const map = p.querySelector('.visit-map');
+        p.innerHTML = `${esc(contact.address)}<br />`;
+        if (map) p.appendChild(map);
+      } else if (siteDefaults.addressHTML) {
+        p.innerHTML = siteDefaults.addressHTML;
+      }
     }
   });
 };
 
 const renderAdminSite = () => {
-  const site = readSite();
+  const site = siteData();
   const form = document.getElementById('site-form');
   if (!form) return;
   const prices = site.prices || {};
@@ -5841,19 +6445,133 @@ const renderAdminSite = () => {
   form.elements.offerOn.checked = !!(site.offer || {}).active;
   form.elements.annText.value = (site.announcement || {}).text || '';
   form.elements.annOn.checked = !!(site.announcement || {}).active;
-  form.elements.faqs.value = Array.isArray(site.faqs) ? site.faqs.map(f => `${f.q}\n${f.a}`).join('\n\n') : '';
+  form.elements.faqs.value = Array.isArray(site.faqs) ? site.faqs.map(f => `${f.q}
+${f.a}`).join('\n\n') : '';
   form.elements.phone.value = (site.contact || {}).phone || '';
   form.elements.email.value = (site.contact || {}).email || '';
   form.elements.hours.value = (site.contact || {}).hours || '';
   form.elements.address.value = (site.contact || {}).address || '';
   const note = document.getElementById('site-saved');
-  if (note) note.textContent = '';
+  if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Shared via Supabase' : '';
 };
+
+/* ---------- tab-2 events (bound once) ---------- */
+(() => {
+  const main = document.getElementById('admin-main');
+  if (!main) return;
+  document.getElementById('iv-add').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 60);
+    const price = parseFloat(form.elements.price.value);
+    const stock = parseInt(form.elements.stock.value, 10);
+    const threshold = parseInt(form.elements.threshold.value, 10);
+    if (!name || !(price >= 0) || !(stock >= 0)) return;
+    try {
+      if (adminInvState.loaded && !adminInvState.error) {
+        await writeInventoryRemote('POST', '', { name, price: Math.round(price), stock, sold: 0, threshold: threshold >= 0 ? threshold : 5 });
+      } else {
+        const items = readInvLocal();
+        items.push({ id: 'p' + Date.now().toString(36), name, price, stock, sold: 0, threshold: threshold >= 0 ? threshold : 5 });
+        writeInvLocal(items);
+      }
+      form.reset();
+      renderAdminInv();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not add product');
+    }
+  });
+  document.getElementById('iv-list').addEventListener('click', async event => {
+    const sell = event.target.closest('[data-iv-sell]');
+    const add = event.target.closest('[data-iv-add]');
+    const del = event.target.closest('[data-iv-del]');
+    if (!sell && !add && !del) return;
+    const id = (sell || add || del).dataset.ivSell || (sell || add || del).dataset.ivAdd || (sell || add || del).dataset.ivDel;
+    try {
+      if (adminInvState.loaded && !adminInvState.error) {
+        const item = invRoster().find(x => x.id === id);
+        if (!item) return;
+        if (del) { await writeInventoryRemote('DELETE', `?id=eq.${encodeURIComponent(id)}`); renderAdminInv(); return; }
+        const patch = {};
+        if (sell && (+item.stock || 0) > 0) { patch.stock = (+item.stock || 0) - 1; patch.sold = (+item.sold || 0) + 1; }
+        if (add) patch.stock = (+item.stock || 0) + 10;
+        await writeInventoryRemote('PATCH', `?id=eq.${encodeURIComponent(id)}`, patch);
+      } else {
+        const items = readInvLocal();
+        const p = items.find(x => x.id === id);
+        if (del) { writeInvLocal(items.filter(x => x.id !== id)); renderAdminInv(); return; }
+        if (!p) return;
+        if (sell && (+p.stock || 0) > 0) { p.stock--; p.sold = (+p.sold || 0) + 1; }
+        if (add) p.stock = (+p.stock || 0) + 10;
+        writeInvLocal(items);
+      }
+      renderAdminInv();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not update inventory');
+    }
+  });
+  document.getElementById('st-add').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const name = form.elements.name.value.trim().slice(0, 50);
+    if (name.length < 2) return;
+    const record = {
+      name,
+      role: form.elements.role.value,
+      phone: form.elements.phone.value.trim().slice(0, 13),
+      salary: parseFloat(form.elements.salary.value) || 0,
+      hours: form.elements.hours.value.trim().slice(0, 30) || '9–5',
+      days: []
+    };
+    try {
+      if (adminStaffState.loaded && !adminStaffState.error) {
+        await writeStaffRemote('POST', '', record);
+      } else {
+        const staff = readStaffLocal();
+        staff.push({ id: 's' + Date.now().toString(36), ...record });
+        writeStaffLocal(staff);
+      }
+      form.reset();
+      renderAdminStaff();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not add staff');
+    }
+  });
+  document.getElementById('st-list').addEventListener('click', async event => {
+    const day = event.target.closest('[data-st-day]');
+    const del = event.target.closest('[data-st-del]');
+    if (!day && !del) return;
+    const id = (day || del).dataset.stDay || (day || del).dataset.stDel;
+    try {
+      if (adminStaffState.loaded && !adminStaffState.error) {
+        const staff = staffRoster();
+        const s = staff.find(x => x.id === id);
+        if (!s) return;
+        if (del) { await writeStaffRemote('DELETE', `?id=eq.${encodeURIComponent(id)}`); renderAdminStaff(); return; }
+        const k = dayKey();
+        const nextDays = (s.days || []).includes(k) ? (s.days || []).filter(d => d !== k) : [...(s.days || []), k];
+        await writeStaffRemote('PATCH', `?id=eq.${encodeURIComponent(id)}`, { days: nextDays });
+      } else {
+        const staff = readStaffLocal();
+        if (del) { writeStaffLocal(staff.filter(x => x.id !== id)); renderAdminStaff(); return; }
+        const s = staff.find(x => x.id === id);
+        if (!s) return;
+        s.days = s.days || [];
+        const k = dayKey();
+        s.days = s.days.includes(k) ? s.days.filter(d => d !== k) : [...s.days, k];
+        writeStaffLocal(staff);
+      }
+      renderAdminStaff();
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Could not update staff');
+    }
+  });
+})();
 
 (() => {
   const form = document.getElementById('site-form');
   if (!form) return;
-  form.addEventListener('submit', event => {
+  form.addEventListener('submit', async event => {
     event.preventDefault();
     const num = v => { const n = parseFloat(v); return n > 0 ? Math.round(n) : undefined; };
     const prices = {};
@@ -5866,7 +6584,7 @@ const renderAdminSite = () => {
       const lines = block.split('\n').map(s => s.trim()).filter(Boolean);
       return lines.length >= 2 ? { q: lines[0].slice(0, 140), a: lines.slice(1).join(' ').slice(0, 600) } : null;
     }).filter(Boolean);
-    writeSite({
+    const payload = {
       prices,
       offer: { title: form.elements.offerTitle.value.trim().slice(0, 80), text: form.elements.offerText.value.trim().slice(0, 200), active: form.elements.offerOn.checked },
       announcement: { text: form.elements.annText.value.trim().slice(0, 160), active: form.elements.annOn.checked },
@@ -5877,21 +6595,47 @@ const renderAdminSite = () => {
         hours: form.elements.hours.value.trim().slice(0, 80),
         address: form.elements.address.value.trim().slice(0, 120)
       }
-    });
-    sessionStorage.removeItem('onyx-ann-x');
-    applySiteContent();
-    const note = document.getElementById('site-saved');
-    if (note) note.textContent = 'Saved — live on this browser immediately.';
+    };
+    try {
+      if (siteSharedState.loaded && !siteSharedState.error && currentUser() && isAdminStrict(currentUser()) && currentUser().supabaseToken) {
+        await saveRemoteSiteContent(payload);
+      } else {
+        writeSiteLocal(payload);
+        siteSharedState.data = payload;
+        applySiteContent();
+        renderAdminSite();
+      }
+      sessionStorage.removeItem('onyx-ann-x');
+      const note = document.getElementById('site-saved');
+      if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Saved — live across devices via Supabase.' : 'Saved — live on this browser immediately.';
+    } catch (error) {
+      const note = document.getElementById('site-saved');
+      if (note) note.textContent = error && error.message ? error.message : 'Could not save site content';
+    }
   });
-  document.getElementById('site-reset').addEventListener('click', () => {
+  document.getElementById('site-reset').addEventListener('click', async () => {
     if (!window.confirm('Reset all site content to defaults?')) return;
-    localStorage.removeItem(SITE_KEY);
-    sessionStorage.removeItem('onyx-ann-x');
-    renderAdminSite();
-    const note = document.getElementById('site-saved');
-    if (note) note.textContent = 'Reset — reload the page to see defaults.';
+    try {
+      if (siteSharedState.loaded && !siteSharedState.error && currentUser() && isAdminStrict(currentUser()) && currentUser().supabaseToken) {
+        await saveRemoteSiteContent({});
+      } else {
+        localStorage.removeItem(SITE_KEY);
+        siteSharedState.data = {};
+      }
+      sessionStorage.removeItem('onyx-ann-x');
+      renderAdminSite();
+      applySiteContent();
+      const note = document.getElementById('site-saved');
+      if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Reset — shared defaults restored.' : 'Reset — reload the page to see defaults.';
+    } catch (error) {
+      const note = document.getElementById('site-saved');
+      if (note) note.textContent = error && error.message ? error.message : 'Could not reset site content';
+    }
   });
 })();
+
+// First paint — runs after every module above is defined.
+/* First paint moved to end of file. */
 
 // First paint — runs after every module above is defined.
 applySiteContent();
@@ -5899,6 +6643,17 @@ updateAuthLinks();
 renderProfile();
 renderCoach();
 renderAdmin();
+loadRemoteSiteContent();
+const bootUser = currentUser();
+if (bootUser && bootUser.supabaseToken) {
+  syncCurrentUserFromSupabase().then(() => {
+    updateAuthLinks();
+    renderProfile();
+    renderCoach();
+    renderAdmin();
+  });
+  if (canAccessTrainer(bootUser)) loadAdminSupabaseMembers();
+}
 
 /* Launch UX enhancements -------------------------------------------------- */
 (() => {
