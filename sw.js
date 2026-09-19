@@ -1,7 +1,8 @@
-const CACHE = 'onyx-shell-v2';
+const CACHE = 'onyx-shell-v52';
 const APP_SHELL = [
-  './', './index.html', './styles.css?v=42', './script.js?v=42', './site.webmanifest',
-  './assets/gym-hero.webp', './assets/gym-hero-900.webp', './assets/favicon.svg'
+  './', './index.html?v=51', './styles.css?v=51', './script.js?v=51', './site.webmanifest',
+  './assets/gym-hero.webp', './assets/gym-hero-900.webp', './assets/favicon.svg',
+  './assets/film/walk-06-wide.jpg?v=51'
 ];
 
 self.addEventListener('install', event => {
@@ -14,6 +15,10 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) return;
+  // Don't cache videos in SW — let browser handle range requests and avoid quota issues
+  if (event.request.url.includes('.mp4') || event.request.destination === 'video') {
+    return;
+  }
   const request = event.request;
   const isDocument = request.mode === 'navigate' || request.destination === 'document';
   event.respondWith(
@@ -30,3 +35,5 @@ self.addEventListener('fetch', event => {
         }))
   );
 });
+
+

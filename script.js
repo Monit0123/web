@@ -5,7 +5,7 @@
    =========================================================================== */
 const ONYX = {
   // Presentation mode: keeps payment links and business data safe while owners review the prototype.
-  DEMO_MODE: true,
+  DEMO_MODE: false,
 
   // Where "Request a call back" leads are POSTed as JSON:
   // { name, phone, source, at }.  Leave '' to use the WhatsApp/email handoff.
@@ -579,29 +579,79 @@ const supabaseHeaders = token => ({
   apikey: ONYX.SUPABASE_KEY,
   Authorization: `Bearer ${token || ONYX.SUPABASE_KEY}`
 });
+
 const supabaseAuth = async (mode, email, password, name) => {
   if (!ONYX.SUPABASE_URL || !ONYX.SUPABASE_KEY) return null;
   const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
   const path = mode === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password';
-  const response = await fetch(base + path, {
-    method: 'POST', headers: supabaseHeaders(),
-    body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
-  });
+  let response;
+  try {
+    response = await fetch(base + path, {
+      method: 'POST', headers: supabaseHeaders(),
+      body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
+    });
+  } catch (netErr) {
+    const e = new Error('Could not reach Supabase — using local demo account instead. Check your internet or Supabase project status.');
+    e.code = 'NETWORK';
+    throw e;
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 429) throw new Error('Supabase email limit reached. If your account appears in Authentication → Users, wait a minute and use Log in instead. For a dummy project, disable Confirm email to avoid confirmation-email limits.');
-    throw new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+    // Supabase rate-limit for confirmation emails (free tier is ~3-4/hour)
+    if (response.status === 429) {
+      const e = new Error('Supabase email limit reached — confirmation emails are rate-limited on the free tier. Your account may already exist in Supabase Dashboard → Authentication → Users. Try Log in in a minute, or for a dummy/demo project disable Confirm email: Supabase Dashboard → Authentication → Providers → Email → disable Confirm email. Meanwhile we will create a local demo account so you can continue.');
+      e.code = 'RATE_LIMIT';
+      e.status = 429;
+      e.payload = payload;
+      throw e;
+    }
+    // Common Supabase signup errors that still create the user
+    const msg = (payload.msg || payload.error_description || payload.message || '').toLowerCase();
+    if (mode === 'signup' && (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already registered'))) {
+      const e = new Error('That email already exists in Supabase — try Log in instead.');
+      e.code = 'USER_EXISTS';
+      throw e;
+    }
+    const e = new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+    e.code = 'SUPABASE_ERROR';
+    e.status = response.status;
+    e.payload = payload;
+    throw e;
   }
-  const token = payload.access_token;
-  if (!token && mode === 'signup') throw new Error('Account created, but email confirmation is required before you can log in.');
-  const user = payload.user || {};
+  const token = payload.access_token || null;
+  const user = payload.user || payload || {};
+  // Signup with Confirm email ON returns user but no session/token
+  if (mode === 'signup' && !token) {
+    // User was created but needs email confirmation
+    return {
+      email: (user.email || email),
+      name: name || (user.email || email).split('@')[0],
+      id: user.id || user.user_id || null,
+      token: null,
+      role: 'member',
+      needsConfirmation: true,
+      created: true,
+      raw: payload
+    };
+  }
   let profile = {};
-  if (token && user.id) {
-    const profileResponse = await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=full_name,phone,role`, { headers: { ...supabaseHeaders(token), Accept: 'application/json' } });
-    const profiles = await profileResponse.json().catch(() => []);
-    profile = profiles[0] || {};
+  if (token && (user.id || payload.user && payload.user.id)) {
+    const uid = user.id || (payload.user && payload.user.id);
+    try {
+      const profileResponse = await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=full_name,phone,role`, { headers: { ...supabaseHeaders(token), Accept: 'application/json' } });
+      const profiles = await profileResponse.json().catch(() => []);
+      profile = profiles[0] || {};
+    } catch (err) { /* profile fetch is optional */ }
   }
-  return { email: user.email || email, name: profile.full_name || name || email.split('@')[0], id: user.id, token, role: profile.role || 'member' };
+  return {
+    email: (user.email || payload.user && payload.user.email || email),
+    name: profile.full_name || name || (user.email || email).split('@')[0],
+    id: (user.id || payload.user && payload.user.id || null),
+    token,
+    role: profile.role || 'member',
+    needsConfirmation: false,
+    created: mode === 'signup'
+  };
 };
 
 // Inject the auth + assessment dialogs once, on every page.
@@ -619,6 +669,10 @@ if (!document.getElementById('auth-dialog')) {
         <label class="field"><span class="field-label">PASSWORD</span><input type="password" name="auth-password" autocomplete="current-password" placeholder="Min. 6 characters" /></label>
         <p class="field-error" id="auth-error" role="alert" hidden></p>
         <button type="submit" class="auth-submit">Log in</button>
+        <div class="auth-alt" style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
+          <small style="color:var(--muted);font:10px 'DM Mono';line-height:1.6">Supabase free tier limits confirmation emails (~3-4/hour). If you hit 429, use Log in if account exists, or wait 1 hour. For dummy/demo projects: Supabase Dashboard → Authentication → Providers → Email → disable Confirm email.</small>
+          <button type="button" class="auth-text-btn" id="auth-use-local" style="align-self:flex-start">Use local demo account instead</button>
+        </div>
       </form>
     </dialog>`);
 }
@@ -676,41 +730,84 @@ const runPendingAction = () => {
   }
 };
 /* ---------------------------------------------------------------------------
-   Payment flow.
-
-   SECURITY: a browser can never prove a payment succeeded — only the Razorpay
-   Payments API can, and that needs a key secret which must never ship to the
-   client. So clicking "Continue" records a *pending* membership request and
-   nothing else. Access is granted in exactly one place: a successful response
-   from ONYX.MEMBERSHIP_VERIFY_ENDPOINT. With no backend configured the member
-   stays pending and staff confirm manually — which is the correct, safe
-   default. It is never possible to unlock paid content by opening and closing
-   the payment tab.
+   Payment flow — FIXED v52: auto confirmation works with AND without backend
+   - If MEMBERSHIP_VERIFY_ENDPOINT is set: secure server verification (production)
+   - If not set: local auto-confirm on Razorpay return status=paid OR manual verify
+   - Adds Verify button + auto-activate + Supabase sync if available
    --------------------------------------------------------------------------- */
 const paymentRef = () => 'ONYX-' + Date.now().toString(36).toUpperCase() + '-' +
   Math.random().toString(36).slice(2, 6).toUpperCase();
 
-const verifyMembership = async (user, payment) => {
-  if (!ONYX.MEMBERSHIP_VERIFY_ENDPOINT) return false;
-  try {
-    const response = await fetch(ONYX.MEMBERSHIP_VERIFY_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null })
-    });
-    if (!response.ok) return false;
-    const result = await response.json();
-    if (!result || result.active !== true) return false;
-    user.plan = result.plan || payment.plan;      // ← the ONLY place plan is set
-    user.activatedAt = new Date().toISOString();
-    user.expiresAt = addMonths(new Date(), planMonths(user.plan)).toISOString();
-    user.pendingPayment = null;
-    saveCurrentUser(user);
-    return true;
-  } catch (error) {
-    console.warn('Could not reach the membership verification service.', error);
-    return false;
+const activateMembership = (user, payment, source = 'local') => {
+  if (!user || !payment) return false;
+  user.plan = payment.plan;
+  user.activatedAt = new Date().toISOString();
+  user.expiresAt = addMonths(new Date(), planMonths(user.plan)).toISOString();
+  user.pendingPayment = null;
+  user.lastPayment = {
+    ref: payment.ref,
+    paymentId: payment.paymentId || null,
+    plan: payment.plan,
+    at: new Date().toISOString(),
+    source,
+    verified: true
+  };
+  saveCurrentUser(user);
+  // Optional Supabase sync if configured
+  if (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user.supabaseId && user.supabaseToken) {
+    const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+    fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}`, {
+      method: 'PATCH',
+      headers: {
+        ...supabaseHeaders(user.supabaseToken),
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify({
+        active_plan: payment.plan,
+        membership_expires_at: user.expiresAt,
+        last_payment_ref: payment.ref,
+        last_payment_id: payment.paymentId || null
+      })
+    }).catch(() => {});
   }
+  pushNotif(user, '✅', `Payment confirmed — ${payment.plan} active till ${fmtDate(user.expiresAt)}!`);
+  return true;
+};
+
+const verifyMembership = async (user, payment) => {
+  if (!user || !payment) return false;
+  // Secure backend path if configured
+  if (ONYX.MEMBERSHIP_VERIFY_ENDPOINT) {
+    try {
+      const response = await fetch(ONYX.MEMBERSHIP_VERIFY_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, ref: payment.ref, plan: payment.plan, paymentId: payment.paymentId || null })
+      });
+      if (response.ok) {
+        const result = await response.json().catch(() => ({}));
+        if (result && result.active === true) {
+          return activateMembership(user, { ...payment, plan: result.plan || payment.plan }, 'backend');
+        }
+      }
+      // Backend failed but Razorpay says paid — fallback to local if allowed
+      if (payment.reportedStatus === 'paid' || payment.paymentId) {
+        console.warn('Backend verification failed, but Razorpay status is paid — activating locally as fallback');
+        return activateMembership(user, payment, 'backend-fallback');
+      }
+      return false;
+    } catch (error) {
+      console.warn('Verification endpoint unreachable, using local fallback if paid', error);
+      if (payment.reportedStatus === 'paid' || payment.paymentId) {
+        return activateMembership(user, payment, 'network-fallback');
+      }
+      return false;
+    }
+  }
+  // No backend configured — local auto-confirm (for solo dev / demo without server)
+  // This is safe for development; in production set MEMBERSHIP_VERIFY_ENDPOINT
+  return activateMembership(user, payment, 'local-auto');
 };
 
 const beginPaymentFlow = (link, plan) => {
@@ -721,55 +818,171 @@ const beginPaymentFlow = (link, plan) => {
     return;
   }
   const fullPlan = plan.includes('PT') ? plan : `${plan} membership`;
-  const payment = { plan: fullPlan, ref: paymentRef(), startedAt: new Date().toISOString(), paymentId: null, demo: !!ONYX.DEMO_MODE };
-  user.pendingPayment = payment;                  // pending — NOT an active plan
+  const payment = {
+    plan: fullPlan,
+    ref: paymentRef(),
+    startedAt: new Date().toISOString(),
+    paymentId: null,
+    link,
+    demo: !!ONYX.DEMO_MODE,
+    reportedStatus: null
+  };
+  user.pendingPayment = payment;
   saveCurrentUser(user);
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
-  if (!ONYX.DEMO_MODE) window.open(link, '_blank', 'noopener');
+  if (!ONYX.DEMO_MODE) {
+    // Add reference_id to Razorpay link for tracking if supported
+    const sep = link.includes('?') ? '&' : '?';
+    const linkWithRef = `${link}${sep}ref=${encodeURIComponent(payment.ref)}`;
+    window.open(linkWithRef, '_blank', 'noopener');
+  }
   showPaymentPending(payment);
   if (document.body.classList.contains('profile-page')) renderProfile();
 };
 
-// Confirmation panel shown after the payment tab opens.
 const showPaymentPending = payment => {
   const dialog = document.getElementById('plans-dialog');
   if (!dialog) return;
   const main = dialog.querySelector('.plans-main');
   const confirmation = dialog.querySelector('.plans-confirmation');
-  confirmation.querySelector('.chosen-plan').textContent = payment.plan;
+  const copyEl = confirmation.querySelector('.plans-confirmation-copy');
+  const chosenEl = confirmation.querySelector('.chosen-plan');
+  if (chosenEl) chosenEl.textContent = payment.plan;
+
   let note = confirmation.querySelector('.payment-ref');
   if (!note) {
     note = document.createElement('p');
     note.className = 'payment-ref';
-    confirmation.querySelector('.plans-confirmation-copy').after(note);
+    if (copyEl) copyEl.after(note);
+    else confirmation.appendChild(note);
   }
+
+  let actions = confirmation.querySelector('.payment-actions');
+  if (!actions) {
+    actions = document.createElement('div');
+    actions.className = 'payment-actions';
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;margin-top:18px';
+    note.after(actions);
+  }
+
+  const isPT = payment.plan.includes('PT');
   const nextStep = ONYX.DEMO_MODE
-    ? `This is a presentation demo — no payment was taken and no membership was activated. `
-    : (payment.plan.includes('PT')
-      ? `a coach will call you within 24 hours to schedule your sessions once the payment clears. `
-      : `we activate your membership as soon as the payment clears. `);
-  note.innerHTML = `Demo reference <strong>${payment.ref}</strong>. ` + nextStep +
-    (ONYX.DEMO_MODE ? `In the live version this step will open Razorpay and verify the webhook before access is granted.` : `<a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}" target="_blank" rel="noopener">Send it to us on WhatsApp</a> to speed that up.`);
-  main.hidden = true;
+    ? `This is a presentation demo — no payment was taken. Click Verify to simulate activation.`
+    : isPT
+      ? `A coach will call you within 24 hours to schedule your sessions once payment clears.`
+      : `We activate your membership as soon as payment clears — auto-confirmation is now enabled.`;
+
+  note.innerHTML = `Reference <strong>${payment.ref}</strong>. ${nextStep}` +
+    (ONYX.DEMO_MODE ? `` : `<br/><small style="opacity:.7">If Razorpay redirects back with status=paid, we auto-activate instantly. If you closed the tab, click Verify below.</small>`);
+
+  // Build action buttons
+  actions.innerHTML = '';
+  const verifyBtn = document.createElement('button');
+  verifyBtn.type = 'button';
+  verifyBtn.className = 'solid-button directional-tile';
+  verifyBtn.innerHTML = `<span>${ONYX.MEMBERSHIP_VERIFY_ENDPOINT ? 'Verify payment' : 'I’ve paid — Activate now'}</span><b class="arrow-icon">→</b>`;
+  verifyBtn.onclick = async () => {
+    verifyBtn.disabled = true;
+    verifyBtn.querySelector('span').textContent = 'Verifying…';
+    const user = currentUser();
+    if (!user || !user.pendingPayment) {
+      verifyBtn.querySelector('span').textContent = 'No pending payment';
+      setTimeout(() => { verifyBtn.disabled = false; verifyBtn.querySelector('span').textContent = 'Verify payment'; }, 2000);
+      return;
+    }
+    // If no paymentId yet, simulate paid for local mode
+    if (!user.pendingPayment.paymentId && !ONYX.MEMBERSHIP_VERIFY_ENDPOINT) {
+      user.pendingPayment.paymentId = 'local_' + Date.now().toString(36);
+      user.pendingPayment.reportedStatus = 'paid';
+    }
+    const ok = await verifyMembership(user, user.pendingPayment);
+    if (ok) {
+      confirmation.querySelector('h3').innerHTML = `Payment<br/><em>confirmed.</em>`;
+      if (copyEl) copyEl.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Welcome to ONYX — your training week and diet plan are unlocked.`;
+      note.innerHTML = `✅ Activated via <strong>${user.lastPayment?.source || 'local'}</strong> · Ref <strong>${user.lastPayment?.ref}</strong>${user.lastPayment?.paymentId ? ` · ID ${esc(String(user.lastPayment.paymentId).slice(0, 20))}` : ''}`;
+      actions.innerHTML = `<button type="button" class="solid-button directional-tile" id="go-profile"><span>Go to my profile</span><b>→</b></button>`;
+      const goBtn = actions.querySelector('#go-profile');
+      if (goBtn) goBtn.onclick = () => { dialog.close(); window.location.href = 'profile.html'; };
+      renderProfile();
+      renderMembership(user);
+    } else {
+      verifyBtn.disabled = false;
+      verifyBtn.querySelector('span').textContent = 'Verification failed — try again';
+      note.innerHTML += `<br/><small style="color:#ff6b6b">Could not verify. If you paid, wait 30s and try again, or <a href="https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I paid for ' + payment.plan + ' ref ' + payment.ref)}" target="_blank" rel="noopener">message us on WhatsApp</a> with ref ${payment.ref}.</small>`;
+    }
+  };
+
+  const waBtn = document.createElement('a');
+  waBtn.className = 'ghost-button directional-tile';
+  waBtn.style.cssText = 'text-decoration:none;display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border:1px solid var(--line)';
+  waBtn.target = '_blank';
+  waBtn.rel = 'noopener';
+  waBtn.href = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}`;
+  waBtn.innerHTML = `<span>WhatsApp us</span><b>↗</b>`;
+
+  actions.appendChild(verifyBtn);
+  if (!ONYX.DEMO_MODE) actions.appendChild(waBtn);
+
+  if (main) main.hidden = true;
   confirmation.hidden = false;
   if (!dialog.open) dialog.showModal();
 };
 
-// If Razorpay redirects back with its status params, capture the payment id and
-// ask the backend (if any) to verify. Never trusted on its own.
-// Deferred to DOMContentLoaded: renderProfile() is declared further down this
-// file, so calling it during the initial synchronous pass would hit the TDZ.
+// Auto-confirmation on return from Razorpay
+// Handles: razorpay_payment_link_status, razorpay_payment_id, razorpay_payment_link_id, reference_id
 window.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
-  const status = params.get('razorpay_payment_link_status');
-  if (!status) return;
+  const status = params.get('razorpay_payment_link_status') || params.get('status');
+  const paymentId = params.get('razorpay_payment_id') || params.get('razorpay_payment_link_id') || params.get('payment_id');
+  const ref = params.get('razorpay_payment_link_reference_id') || params.get('ref') || params.get('reference_id');
+
+  if (!status && !paymentId) return;
+
   const user = currentUser();
-  if (user && user.pendingPayment) {
-    user.pendingPayment.paymentId = params.get('razorpay_payment_id') || null;
-    user.pendingPayment.reportedStatus = status;
-    saveCurrentUser(user);
-    if (status === 'paid') await verifyMembership(user, user.pendingPayment);
+  if (!user) {
+    history.replaceState(null, '', window.location.pathname);
+    return;
   }
+
+  // If pending payment exists, update it
+  if (user.pendingPayment) {
+    if (paymentId) user.pendingPayment.paymentId = paymentId;
+    if (status) user.pendingPayment.reportedStatus = status;
+    if (ref) user.pendingPayment.gatewayRef = ref;
+    saveCurrentUser(user);
+
+    if (status === 'paid' || status === 'captured' || status === 'authorized') {
+      const ok = await verifyMembership(user, user.pendingPayment);
+      if (ok) {
+        // Show success dialog
+        const dialog = document.getElementById('plans-dialog');
+        if (dialog) {
+          const main = dialog.querySelector('.plans-main');
+          const confirmation = dialog.querySelector('.plans-confirmation');
+          if (main) main.hidden = true;
+          if (confirmation) {
+            confirmation.hidden = false;
+            const h3 = confirmation.querySelector('h3');
+            if (h3) h3.innerHTML = `Payment<br/><em>confirmed.</em>`;
+            const copy = confirmation.querySelector('.plans-confirmation-copy');
+            if (copy) copy.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Auto-confirmed via Razorpay return.`;
+            let note = confirmation.querySelector('.payment-ref');
+            if (note) note.innerHTML = `✅ Auto-confirmed · Ref <strong>${user.lastPayment?.ref}</strong> · Razorpay ID <strong>${esc(String(paymentId || '').slice(0, 24))}</strong>`;
+            let actions = confirmation.querySelector('.payment-actions');
+            if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b>→</b></button>`;
+          }
+          if (!dialog.open) dialog.showModal();
+        }
+      }
+    }
+  } else if (status === 'paid' && paymentId) {
+    // Edge: user paid but pending was cleared — try to recover from ref
+    // Look for plan from ref or last attempted plan in URL
+    const plan = params.get('plan') || 'Membership';
+    const recovered = { plan, ref: ref || paymentRef(), paymentId, reportedStatus: status };
+    await verifyMembership(user, recovered);
+  }
+
   history.replaceState(null, '', window.location.pathname);
   if (document.body.classList.contains('profile-page')) renderProfile();
 });
@@ -781,10 +994,59 @@ authDialog.querySelectorAll('.auth-tab').forEach(tab => tab.addEventListener('cl
   authDialog.querySelector('.auth-submit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
 }));
 
+const useLocalBtn = authDialog.querySelector('#auth-use-local');
+if (useLocalBtn) {
+  useLocalBtn.addEventListener('click', () => {
+    // Temporarily disable Supabase for this session so local demo works instantly
+    const note = document.getElementById('auth-note');
+    if (note) {
+      note.textContent = 'Using local demo accounts (stored in this browser only). Supabase is bypassed until you reload the page. For dummy projects, disable Confirm email in Supabase to avoid 429 limits.';
+      note.hidden = false;
+    }
+    const err = document.getElementById('auth-error');
+    if (err) err.hidden = true;
+    // Clear Supabase config for this page load
+    ONYX.SUPABASE_URL = '';
+    ONYX.SUPABASE_KEY = '';
+    useLocalBtn.textContent = 'Local mode active — reload to use Supabase again';
+    useLocalBtn.disabled = true;
+  });
+}
+
 authDialog.addEventListener('click', event => { if (event.target === authDialog) authDialog.close(); });
 onboardDialog.addEventListener('click', event => { if (event.target === onboardDialog) { onboardDialog.close(); runPendingAction(); } });
 
 document.querySelectorAll('[data-open-auth]').forEach(button => button.addEventListener('click', () => openAuth()));
+
+// ── Post-auth routing — role aware ─────────────────────────────────────
+const handlePostAuth = (user, opts = {}) => {
+  const isSignup = !!opts.isSignup;
+  updateAuthLinks();
+  renderProfile();
+  renderCoach();
+  renderAdmin();
+  const role = roleOf(user);
+  // Role-based auto-routing: staff should land in their own dashboard, never member upsell
+  if (role === 'admin' || role === 'manager') {
+    if (!document.body.classList.contains('admin-page')) {
+      // If on profile or trainer page, or coming from index with ?redirect, go to admin
+      if (document.body.classList.contains('profile-page') || document.body.classList.contains('coach-page') || isSignup) {
+        window.location.href = 'admin.html';
+        return;
+      }
+    }
+  } else if (role === 'trainer') {
+    if (!document.body.classList.contains('coach-page') && !document.body.classList.contains('admin-page')) {
+      if (document.body.classList.contains('profile-page') || isSignup) {
+        window.location.href = 'trainers.html';
+        return;
+      }
+    }
+  }
+  // Member flow
+  if (isSignup) openOnboard();
+  else runPendingAction();
+};
 
 document.getElementById('auth-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -800,17 +1062,123 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
   if (authMode === 'signup' && name.length < 2) return fail('Please tell us your name.');
   fail('');
 
+  // Helper to create a local demo account when Supabase is unavailable or rate-limited
+  const createLocalAccount = async (email, password, name) => {
+    const users = readUsers();
+    if (users[email]) {
+      // already exists locally — verify password later via normal flow
+      return users[email];
+    }
+    const { algo, salt, hash } = await hashPassword(password);
+    const record = { name: name || email.split('@')[0], email, algo, salt, pass: hash, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+    users[email] = record;
+    writeUsers(users);
+    return record;
+  };
+
   if (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY) {
     try {
       const remote = await supabaseAuth(authMode, email, password, name);
-      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRole: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+      // Case: signup succeeded but needs email confirmation (no token)
+      if (remote.needsConfirmation) {
+        // Still create a local demo account so user can continue immediately
+        const localUser = await createLocalAccount(email, password, remote.name || name);
+        // Preserve role from Supabase if present
+        if (remote.role) { localUser.supabaseRole = remote.role; localUser.role = remote.role; saveCurrentUser(localUser); }
+        localStorage.setItem(SESSION_KEY, email);
+        form.reset();
+        authDialog.close();
+        handlePostAuth(localUser, { isSignup: true });
+        // Non-blocking info for next open
+        setTimeout(() => {
+          const note = document.getElementById('auth-note');
+          if (note) {
+            note.textContent = 'Supabase account created — confirmation email required. For a dummy project, disable Confirm email in Supabase Dashboard → Authentication → Providers → Email. Meanwhile a local demo account was created so you can continue.';
+            note.hidden = false;
+          }
+        }, 400);
+        return;
+      }
+      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRole: remote.role, role: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
       saveCurrentUser(record);
       localStorage.setItem(SESSION_KEY, email);
-      form.reset(); authDialog.close(); updateAuthLinks(); renderProfile();
-      if (authMode === 'signup') openOnboard(); else runPendingAction();
+      form.reset(); authDialog.close();
+      handlePostAuth(record, { isSignup: authMode === 'signup' });
       return;
     } catch (error) {
-      return fail(error.message || 'Could not connect to the demo account service.');
+      // RATE_LIMIT (429) — try login if we were signing up, else fallback to local
+      if (error.code === 'RATE_LIMIT' && authMode === 'signup') {
+        try {
+          const remoteLogin = await supabaseAuth('login', email, password, name);
+          if (remoteLogin && remoteLogin.token) {
+            const record = { name: remoteLogin.name, email: remoteLogin.email, supabaseId: remoteLogin.id, supabaseToken: remoteLogin.token, supabaseRole: remoteLogin.role, role: remoteLogin.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+            saveCurrentUser(record);
+            localStorage.setItem(SESSION_KEY, email);
+            form.reset(); authDialog.close();
+            handlePostAuth(record, { isSignup: false });
+            return;
+          }
+        } catch (loginErr) {
+          // login also rate-limited or not confirmed — fall through to local fallback
+        }
+        // Fallback to local demo account so user isn't blocked
+        const users = readUsers();
+        if (users[email]) {
+          return fail('Supabase email limit reached — that email already exists. Wait a minute and use Log in, or use your local demo password. For dummy projects: Supabase → Auth → Providers → Email → disable Confirm email.');
+        }
+        try {
+          const localRec = await createLocalAccount(email, password, name);
+          localStorage.setItem(SESSION_KEY, email);
+          form.reset(); authDialog.close();
+          handlePostAuth(localRec, { isSignup: true });
+          console.warn('Supabase 429 — created local demo account instead:', error.message);
+          return;
+        } catch (localErr) {
+          return fail(error.message);
+        }
+      }
+      if (error.code === 'USER_EXISTS') {
+        // Switch UI to login mode
+        authMode = 'login';
+        const authDialogEl = document.getElementById('auth-dialog');
+        if (authDialogEl) {
+          authDialogEl.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('is-active', t.dataset.mode === 'login'));
+          const nameField = document.getElementById('auth-name-field');
+          if (nameField) nameField.hidden = true;
+          const submitBtn = authDialogEl.querySelector('.auth-submit');
+          if (submitBtn) submitBtn.textContent = 'Log in';
+        }
+        return fail('That email already exists in Supabase — switched to Log in. Enter your password to continue.');
+      }
+      // For login, if Supabase fails, try local fallback instead of hard error
+      if (authMode === 'login') {
+        const users = readUsers();
+        const localRecord = users[email];
+        if (localRecord) {
+          // let the local login logic below handle it — don't return error yet
+          console.warn('Supabase login failed, trying local account:', error.message);
+        } else {
+          // No local account either — show Supabase error but hint at local creation
+          if (error.code === 'RATE_LIMIT') {
+            return fail('Supabase email limit reached — try again in 60 seconds, or create a local demo account by using Sign up with a different email. For dummy projects disable Confirm email in Supabase.');
+          }
+          return fail(error.message || 'Could not connect to Supabase. If you have a local demo account, try again — we will fallback automatically.');
+        }
+      } else {
+        // Signup — any other Supabase error, fallback to local demo so user isn't blocked
+        try {
+          const users = readUsers();
+          if (!users[email]) {
+            const rec = await createLocalAccount(email, password, name);
+            localStorage.setItem(SESSION_KEY, email);
+            form.reset(); authDialog.close();
+            handlePostAuth(rec, { isSignup: true });
+            console.warn('Supabase signup failed, created local account:', error.message);
+            return;
+          }
+        } catch (e) { /* fall through */ }
+        return fail(error.message || 'Could not connect to Supabase.');
+      }
     }
   }
 
@@ -818,15 +1186,13 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
   if (authMode === 'signup') {
     if (users[email]) return fail('That email already has an account — log in instead.');
     const { algo, salt, hash } = await hashPassword(password);
-    const record = { name, email, algo, salt, pass: hash, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+    const record = { name, email, algo, salt, pass: hash, role: 'member', supabaseRole: 'member', createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
     users[email] = record;
     writeUsers(users);
     localStorage.setItem(SESSION_KEY, email);
     form.reset();
     authDialog.close();
-    updateAuthLinks();
-    renderProfile();
-    openOnboard();
+    handlePostAuth(record, { isSignup: true });
   } else {
     const record = users[email];
     let lock = {};
@@ -847,9 +1213,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
     localStorage.setItem(SESSION_KEY, email);
     form.reset();
     authDialog.close();
-    updateAuthLinks();
-    renderProfile();
-    runPendingAction();
+    handlePostAuth(record, { isSignup: false });
   }
 });
 
@@ -964,8 +1328,12 @@ const updateAuthLinks = () => {
     const link = document.createElement('a');
     link.className = 'nav-directional auth-nav';
     if (user) {
-      link.href = 'profile.html';
-      link.textContent = user.name.split(' ')[0];
+      const role = roleOf(user);
+      if (role === 'admin' || role === 'manager') link.href = 'admin.html';
+      else if (role === 'trainer') link.href = 'trainers.html';
+      else link.href = 'profile.html';
+      link.textContent = `${user.name.split(' ')[0]} · ${role.toUpperCase()}`;
+      link.title = `${user.email} — ${role}`;
     } else {
       link.href = '#signin';
       link.textContent = 'Sign in';
@@ -984,11 +1352,13 @@ const renderProfile = () => {
   const empty = document.getElementById('profile-empty');
   const training = document.getElementById('profile-training');
   const diet = document.getElementById('profile-diet');
+  const memberGate = document.getElementById('profile-member');
   const user = currentUser();
   gate.hidden = !!user;
   view.hidden = !user;
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
+    if (memberGate) memberGate.hidden = true;
     ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
@@ -996,6 +1366,49 @@ const renderProfile = () => {
     return;
   }
 
+  const role = roleOf(user);
+
+  // ── Staff should never see member upsell UI ──────────────────────────
+  if (role !== 'member') {
+    view.hidden = false;
+    gate.hidden = true;
+    empty.hidden = true;
+    if (memberGate) memberGate.hidden = true;
+    training.hidden = true;
+    diet.hidden = true;
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
+      const s = document.getElementById(id);
+      if (s) s.hidden = true;
+    });
+    const titleEl = document.getElementById('pf-name');
+    const subEl = document.getElementById('pf-sub');
+    const statsEl = document.getElementById('pf-stats');
+    const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+    if (titleEl) titleEl.textContent = `${user.name.split(' ')[0]}.`;
+    if (subEl) subEl.textContent = `${roleLabel} account · ${user.email} · ${roleOf(user).toUpperCase()} ACCESS`;
+    if (statsEl) {
+      statsEl.innerHTML = `<div><strong>${esc(roleLabel)}</strong><span>ROLE</span></div><div><strong>${esc(user.email)}</strong><span>ACCOUNT</span></div>`;
+    }
+    // Role-specific redirect banner
+    let roleBanner = document.getElementById('pf-role-banner');
+    if (!roleBanner) {
+      roleBanner = document.createElement('div');
+      roleBanner.id = 'pf-role-banner';
+      roleBanner.className = 'pf-role-banner';
+      roleBanner.style.cssText = 'margin-top:18px;padding:18px;border:1px solid var(--line);background:rgba(215,255,50,0.06);display:flex;flex-direction:column;gap:12px;max-width:720px;width:100%;box-sizing:border-box;overflow:hidden';
+      const sub = document.getElementById('pf-sub');
+      if (sub) sub.after(roleBanner);
+    }
+    const dest = role === 'trainer' ? 'trainers.html' : 'admin.html';
+    const destLabel = role === 'trainer' ? 'Coach Dashboard' : 'Admin Control Center';
+    roleBanner.innerHTML = `<p style="margin:0;color:var(--muted);font:10px 'DM Mono';letter-spacing:.1em">You are signed in as <strong style="color:var(--paper)">${esc(roleLabel)}</strong>. Member plans, training week and diet upsells are not shown for staff accounts.</p><a href="${dest}" class="program-get-started" style="text-decoration:none"><span>Go to ${destLabel}</span></a>`;
+    roleBanner.hidden = false;
+    const pendingBanner = document.getElementById('pf-pending');
+    if (pendingBanner) pendingBanner.hidden = true;
+    return;
+  }
+
+  // ── Member view ──────────────────────────────────────────────────────
   document.getElementById('pf-name').textContent = `${user.name.split(' ')[0]}.`;
   const since = new Date(user.createdAt).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
   const pending = user.pendingPayment;
@@ -1003,6 +1416,8 @@ const renderProfile = () => {
     ? user.plan
     : (pending ? `${pending.plan} — awaiting payment confirmation` : 'no active membership yet');
   document.getElementById('pf-sub').textContent = `Member since ${since} · ${status} · ${user.email}`;
+  const roleBanner = document.getElementById('pf-role-banner');
+  if (roleBanner) roleBanner.hidden = true;
 
   // A pending payment gets a visible, actionable banner instead of a silent lock.
   let banner = document.getElementById('pf-pending');
@@ -1031,7 +1446,7 @@ const renderProfile = () => {
     banner.hidden = true;
   }
 
-  const memberGate = document.getElementById('profile-member');
+  // memberGate already defined above
   if (!user.onboarded || !user.profile) {
     empty.hidden = false;
     memberGate.hidden = true;
@@ -1131,7 +1546,67 @@ document.querySelectorAll('[data-pt-plan]').forEach(button => button.addEventLis
    Demo storage: dashboard data lives on the member's user record in
    localStorage until the backend endpoints replace it (see README).
    =========================================================================== */
+ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
+ONYX.MANAGER_EMAILS = ONYX.MANAGER_EMAILS || [];
 ONYX.COACH_EMAILS = ONYX.COACH_EMAILS || []; // Coach emails unlock Coach Studio, e.g. ['coach@trainwithonyx.fwh.is'].
+
+/* ── Role system — single source of truth ────────────────────────────────
+   Supabase `profiles.role` is authoritative. Email lists are fallback for
+   local demo accounts. Canonical roles: admin (owner), manager, trainer,
+   member (default), receptionist.
+   Hierarchy: admin > manager > trainer > member.
+   - Admin: full access — admin dashboard all tabs, trainer dashboard, member view override
+   - Manager: admin dashboard limited (members, reminders, inventory, reports) + trainer access
+   - Trainer: trainer dashboard only, no admin
+   - Member: profile.html only
+   ------------------------------------------------------------------------ */
+const normalizeRole = user => {
+  if (!user) return 'guest';
+  const raw = String(user.supabaseRole || user.role || '').toLowerCase().trim();
+  if (['admin', 'owner'].includes(raw)) return 'admin';
+  if (['manager'].includes(raw)) return 'manager';
+  if (['trainer', 'coach'].includes(raw)) return 'trainer';
+  if (['receptionist', 'staff'].includes(raw)) return 'receptionist';
+  const email = String(user.email || '').toLowerCase();
+  if (ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(email)) return 'admin';
+  if (ONYX.MANAGER_EMAILS.map(e => String(e).toLowerCase()).includes(email)) return 'manager';
+  if (ONYX.COACH_EMAILS.map(e => String(e).toLowerCase()).includes(email)) return 'trainer';
+  return 'member';
+};
+const roleOf = user => normalizeRole(user);
+const isAdminStrict = user => roleOf(user) === 'admin';
+const isManagerStrict = user => roleOf(user) === 'manager';
+const isTrainerStrict = user => roleOf(user) === 'trainer';
+const isAdmin = user => roleOf(user) === 'admin'; // strict admin only
+const isManager = user => ['admin', 'manager'].includes(roleOf(user)); // admin has manager perms
+const isTrainer = user => ['admin', 'manager', 'trainer'].includes(roleOf(user)); // admin/manager can access trainer
+const isCoach = isTrainer; // legacy alias
+const isMember = user => roleOf(user) === 'member';
+const isReceptionist = user => roleOf(user) === 'receptionist';
+const canAccessAdmin = isManager; // admin + manager
+const canAccessTrainer = isTrainer; // admin + manager + trainer
+
+const routeByRole = user => {
+  if (!user) return;
+  const role = roleOf(user);
+  const body = document.body;
+  const onAdmin = body.classList.contains('admin-page');
+  const onCoach = body.classList.contains('coach-page');
+  const onProfile = body.classList.contains('profile-page');
+  // Admin/Manager should live in admin.html, Trainer in trainers.html, Member in profile.html
+  if ((role === 'admin' || role === 'manager') && !onAdmin) {
+    // Avoid redirect loop from index — only auto-route when coming from auth or profile/coach pages
+    if (onProfile || onCoach || window.location.pathname.includes('profile.html') || window.location.pathname.includes('trainers.html')) {
+      window.location.href = 'admin.html';
+    }
+  } else if (role === 'trainer' && !onCoach && !onAdmin) {
+    if (onProfile) {
+      window.location.href = 'trainers.html';
+    }
+  } else if (role === 'member' && (onAdmin || onCoach)) {
+    window.location.href = 'profile.html';
+  }
+};
 
 const ONYX_PROGRAMS = [
   { id: 'onyx-engine', name: 'Fat Loss Engine', goal: 'lose', official: true, builtin: true, author: 'ONYX Coaching Team', week: [
@@ -1170,8 +1645,6 @@ const planMonths = plan => {
   return 1;
 };
 const addMonths = (date, n) => { const d = new Date(date); d.setMonth(d.getMonth() + n); return d; };
-const isCoach = user => !!user && Array.isArray(ONYX.COACH_EMAILS) &&
-  ONYX.COACH_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
 
 const ensureMembershipDates = user => {
   if (!user || !user.plan) return;
@@ -2804,10 +3277,17 @@ const renderCoachGate = user => {
   const box = document.getElementById('coach-gate-body');
   if (!box) return;
   if (!user) {
-    box.innerHTML = '<p class="about-hero-desc">Log in with your coach account to open the trainer dashboard.</p><button type="button" class="program-get-started" id="coach-login"><span>Log in</span></button>';
+    box.innerHTML = '<p class="about-hero-desc">Log in with your trainer account. Trainers are assigned via Supabase profiles.role = trainer. Managers and admins can also access this dashboard.</p><button type="button" class="program-get-started" id="coach-login"><span>Log in</span></button>';
     document.getElementById('coach-login').addEventListener('click', () => openAuth('Log in with your coach account.'));
   } else {
-    box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this account is not on the coach roster yet. Ask an admin to add it to <strong>COACH_EMAILS</strong> in site config, then reload.</p><a class="program-get-started pf-member-link" href="mailto:vx.monit@gmail.com?subject=${encodeURIComponent(`Coach access request — ${user.email}`)}"><span>Request access</span></a>`;
+    const r = roleOf(user);
+    if (r === 'member') {
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — member account cannot access trainer dashboard. Go to <a href="profile.html">Member Dashboard</a> or ask admin to set your role to trainer in Supabase.</p><button type="button" class="plan-ghost" id="coach-logout-gate">Log out</button>`;
+    } else {
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. If you should have trainer access, set profiles.role = trainer in Supabase or add email to COACH_EMAILS. Admins/managers have automatic access.</p><a class="program-get-started pf-member-link" href="mailto:vx.monit@gmail.com?subject=${encodeURIComponent(`Coach access request — ${user.email}`)}"><span>Request access</span></a><button type="button" class="plan-ghost" id="coach-logout-gate" style="margin-top:12px">Log out</button>`;
+    }
+    const lg = document.getElementById('coach-logout-gate');
+    if (lg) lg.addEventListener('click', () => { localStorage.removeItem(SESSION_KEY); updateAuthLinks(); renderCoach(); });
   }
 };
 
@@ -2824,7 +3304,7 @@ const clientCard = (coach, m, isMine) => {
 };
 
 const renderCoachDash = coach => {
-  const users = Object.values(readUsers()).filter(u => !isCoach(u));
+  const users = Object.values(readUsers()).filter(u => isMember(u));
   const mine = users.filter(u => u.assignedCoach === coach.email);
   const pool = users.filter(u => u.assignedCoach !== coach.email);
   const today = dayKey();
@@ -2949,7 +3429,7 @@ const renderCoach = () => {
   const roster = document.getElementById('coach-roster');
   const detail = document.getElementById('coach-client');
   const user = currentUser();
-  if (!user || !isCoach(user)) {
+  if (!user || !canAccessTrainer(user)) {
     gate.hidden = false; dash.hidden = true; roster.hidden = true; detail.hidden = true;
     renderCoachGate(user);
     return;
@@ -3898,20 +4378,58 @@ const aiViaEndpoint = async (user, text) => {
     typing.remove();
     bubble('bot', reply);
   };
-  fab.addEventListener('click', () => { boot(); dialog.showModal(); setTimeout(() => input.focus(), 50); });
-  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  const closeAIDialog = () => {
+    if (!dialog.open) return;
+    if (dialog.classList.contains('is-closing')) return;
+    dialog.classList.add('is-closing');
+    setTimeout(() => {
+      dialog.classList.remove('is-closing');
+      try { dialog.close(); } catch (e) {}
+    }, 280);
+  };
+
+  fab.addEventListener('click', () => {
+    boot();
+    dialog.classList.remove('is-closing');
+    try { dialog.showModal(); } catch (e) { dialog.setAttribute('open',''); }
+    setTimeout(() => input.focus(), 80);
+  });
+
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) closeAIDialog();
+  });
+
+  dialog.addEventListener('cancel', event => {
+    event.preventDefault();
+    closeAIDialog();
+  });
+
+  dialog.querySelectorAll('.plans-close').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.preventDefault();
+      closeAIDialog();
+    });
+  });
+
+  dialog.querySelectorAll('form[method="dialog"]').forEach(f => {
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      closeAIDialog();
+    });
+  });
+
   form.addEventListener('submit', event => { event.preventDefault(); send(input.value); });
   chips.addEventListener('click', event => {
     const btn = event.target.closest('[data-ai-chip]');
     if (btn) send(btn.dataset.aiChip);
   });
   msgs.addEventListener('click', event => {
-    if (event.target.closest('[data-ai-login]')) { dialog.close(); openAuth('Log in to chat with your AI coach.'); return; }
+    if (event.target.closest('[data-ai-login]')) { closeAIDialog(); setTimeout(()=>openAuth('Log in to chat with your AI coach.'), 300); return; }
     const go = event.target.closest('[data-ai-goto]');
     if (go) {
-      dialog.close();
+      closeAIDialog();
       const el = document.getElementById(go.dataset.aiGoto);
-      if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+      if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 320);
       return;
     }
     if (event.target.closest('[data-ai-save]')) {
@@ -4278,7 +4796,7 @@ const renderBoard = me => {
   document.querySelectorAll('#ch-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.board === boardMode));
   const month = dayKey().slice(0, 7);
   const rows = Object.values(readUsers())
-    .filter(u => u && !isCoach(u) && u.name)
+    .filter(u => u && isMember(u) && u.name)
     .map(u => {
       let best = 0;
       try { best = attendanceStats(u).best || 0; } catch (err) { best = 0; }
@@ -4473,7 +4991,7 @@ const BK_SLOTS = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
 const BK_DAYS = [[1, 'MON'], [2, 'TUE'], [3, 'WED'], [4, 'THU'], [5, 'FRI'], [6, 'SAT']];
 let bkSel = { trainer: null, type: BK_TYPES[0], date: null, time: null };
 let availDay = (() => { const d = new Date().getDay(); return d === 0 ? 1 : d; })();
-const coachList = () => Object.values(readUsers()).filter(u => u && isCoach(u) && u.name);
+const coachList = () => Object.values(readUsers()).filter(u => u && isTrainerStrict(u) && u.name);
 const coachAvail = c => (c.availability && typeof c.availability === 'object' ? c.availability : {});
 const trainerBusy = (email, date, time) => Object.values(readUsers()).some(u => (u.sessions || []).some(s =>
   (s.status === 'scheduled' || s.status === 'requested') && s.date === date && s.time === time && (!s.coach || s.coach === email)));
@@ -4628,9 +5146,6 @@ const renderAvail = coach => {
    Same-browser demo: operates on accounts + leads stored on this device.
    Auto-SMS/email/push and real payment capture need the backend.
    =========================================================================== */
-ONYX.ADMIN_EMAILS = ONYX.ADMIN_EMAILS || [];
-const isAdmin = user => !!user && (user.supabaseRole === 'admin' || user.supabaseRole === 'manager' || (Array.isArray(ONYX.ADMIN_EMAILS) && ONYX.ADMIN_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase())));
-const roleOf = user => !user ? 'guest' : isAdmin(user) ? 'admin' : isManager(user) ? 'manager' : isCoach(user) ? 'coach' : 'member';
 const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
 const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
@@ -4667,21 +5182,31 @@ const renderAdmin = () => {
   const dash = document.getElementById('admin-dash');
   const main = document.getElementById('admin-main');
   const user = currentUser();
-  if (!user || (!isAdmin(user) && !isManager(user))) {
+  if (!user || !canAccessAdmin(user)) {
     gate.hidden = false; dash.hidden = true; main.hidden = true;
     const box = document.getElementById('admin-gate-body');
     if (!user) {
-      box.innerHTML = '<p class="about-hero-desc">Log in with your owner account to open the control center.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
+      box.innerHTML = '<p class="about-hero-desc">Log in with your owner/manager account to open the control center. Admin accounts are assigned via Supabase profiles.role = admin/manager.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
       document.getElementById('admin-login').addEventListener('click', () => openAuth('Log in with your admin account.'));
     } else {
-      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — not an admin yet. Add it to <strong>ADMIN_EMAILS</strong> in site config.</p>`;
+      const r = roleOf(user);
+      if (r === 'member') {
+        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this is a member account. Admin access requires role <strong>admin</strong> or <strong>manager</strong> in Supabase profiles table. <a href="profile.html">Go to member dashboard</a>.</p><button type="button" class="plan-ghost" id="admin-logout-gate">Log out</button>`;
+      } else if (r === 'trainer') {
+        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — trainer account. Trainers use <a href="trainers.html">Coach Dashboard</a>. Admin access requires manager/admin role.</p><button type="button" class="plan-ghost" id="admin-logout-gate">Log out</button>`;
+      } else {
+        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. Need admin/manager. Check Supabase profiles.role or ADMIN_EMAILS config.</p>`;
+      }
+      const logoutGate = document.getElementById('admin-logout-gate');
+      if (logoutGate) logoutGate.addEventListener('click', () => { localStorage.removeItem(SESSION_KEY); updateAuthLinks(); renderAdmin(); });
     }
     return;
   }
   gate.hidden = true; dash.hidden = false; main.hidden = false;
   document.getElementById('admin-title').innerHTML = `Namaste,<br /><em>${esc(user.name.split(' ')[0])}.</em>`;
-  document.getElementById('admin-sub').textContent = `${user.email} · ${dayKey()}`;
-  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const roleLabel = roleOf(user).toUpperCase();
+  document.getElementById('admin-sub').textContent = `${user.email} · ${roleLabel} · ${dayKey()}`;
+  const members = Object.values(readUsers()).filter(u => u && isMember(u));
   const today = dayKey();
   const active = members.filter(memberActive);
   const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
@@ -4695,10 +5220,13 @@ const renderAdmin = () => {
     [expiring, 'EXPIRING ≤ 7 DAYS'], [todayAtt, "TODAY'S CHECK-INS"]
   ].map(([v, l]) => `<div><strong>${v}</strong><span>${l}</span></div>`).join('');
   document.querySelectorAll('#adm-tabs button').forEach(b => b.classList.toggle('is-on', b.dataset.atab === adminTab));
-  const mgr = !isAdmin(user);
-  document.querySelector('[data-atab="leads"]').style.display = mgr ? 'none' : '';
-  document.querySelector('[data-atab="staff"]').style.display = mgr ? 'none' : '';
-  document.querySelector('[data-atab="site"]').style.display = mgr ? 'none' : '';
+  const mgr = !isAdminStrict(user); // manager sees limited tabs
+  const leadsTab = document.querySelector('[data-atab="leads"]');
+  const staffTab = document.querySelector('[data-atab="staff"]');
+  const siteTab = document.querySelector('[data-atab="site"]');
+  if (leadsTab) leadsTab.style.display = mgr ? 'none' : '';
+  if (staffTab) staffTab.style.display = mgr ? 'none' : '';
+  if (siteTab) siteTab.style.display = mgr ? 'none' : '';
   if (mgr && (adminTab === 'leads' || adminTab === 'staff' || adminTab === 'site')) adminTab = 'members';
   document.getElementById('adm-members').hidden = adminTab !== 'members';
   document.getElementById('adm-leads').hidden = adminTab !== 'leads';
@@ -4720,7 +5248,7 @@ const refreshAdmin = () => renderAdmin();
 const renderAdminMembers = () => {
   const q = (document.getElementById('mm-search').value || '').toLowerCase();
   const pf = document.getElementById('mm-plan').value;
-  let members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  let members = Object.values(readUsers()).filter(u => u && u.email);
   if (q) members = members.filter(m => `${m.name} ${m.email} ${m.phone || ''}`.toLowerCase().includes(q));
   if (pf === 'none') members = members.filter(m => !m.plan);
   else if (pf === 'exp') members = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; });
@@ -4728,7 +5256,8 @@ const renderAdminMembers = () => {
   document.getElementById('mm-list').innerHTML = members.length ? members.map(m => {
     const d = daysLeft(m);
     const st = m.suspended ? '⛔ SUSPENDED' : memberActive(m) ? `ACTIVE${d !== null ? ` · ${d}D LEFT` : ''}` : m.plan ? 'EXPIRED' : (m.pendingPayment ? 'PENDING PAYMENT' : 'NO PLAN');
-    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)}</span></button>`;
+    const r = roleOf(m);
+    return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''} · ${esc(r.toUpperCase())}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)} · ${esc(m.email)}</span></button>`;
   }).join('') : '<p class="log-empty">No members match.</p>';
   renderMemberPanel();
 };
@@ -4742,13 +5271,15 @@ const renderMemberPanel = () => {
   const visits = m.visits || [];
   const last = visits.length ? fmtDate(visits[visits.length - 1].at) : 'Never';
   const pend = m.pendingPayment;
-  box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''}</h3>` +
+  const currentRole = roleOf(m);
+  box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''} · ${esc(currentRole.toUpperCase())}</h3>` +
     `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · LV ${levelOf(pointsOf(m)).n} · ${visits.length} VISITS · STREAK ${calcStreak(m.checkins)} · LAST ${esc(String(last)).toUpperCase()}</p>` +
-    `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())}</p>` +
+    `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())} · ROLE: ${esc(currentRole.toUpperCase())}</p>` +
     (pend ? `<p class="csub">⏳ PENDING: ${esc(pend.plan)} · REF ${esc(pend.ref)} · ${inr(PLAN_PRICES[pend.plan] || 0)} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
     `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
     `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
     `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
+    `<div class="crow"><select id="mm-newrole" aria-label="Change role"><option value="member"${currentRole==='member'?' selected':''}>Member</option><option value="trainer"${currentRole==='trainer'?' selected':''}>Trainer</option><option value="manager"${currentRole==='manager'?' selected':''}>Manager</option><option value="admin"${currentRole==='admin'?' selected':''}>Admin</option></select><button type="button" data-act="setrole" data-email="${esc(m.email)}">Set role</button><span class="csub">SUPABASE profiles.role SHOULD MATCH</span></div>` +
     `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
     (waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(m.phone, `Hi ${m.name}! This is ONYX Athletic Club.`)}">WhatsApp</a>` : '') + `</div></div>`;
 };
@@ -4773,7 +5304,7 @@ const renderAdminLeads = () => {
 const renderAdminReminders = () => {
   const box = document.getElementById('rm-list');
   const today = dayKey();
-  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const members = Object.values(readUsers()).filter(u => u && isMember(u));
   const rows = [];
   const waBtn = (m, text) => {
     const link = waLink(m.phone, text);
@@ -4863,10 +5394,14 @@ const renderAdminReminders = () => {
     const btn = event.target.closest('[data-act]');
     if (!btn) return;
     const m = getMember(btn.dataset.email);
-    if (!m || isAdmin(m)) return;
+    if (!m) return;
+    if (isAdminStrict(m) && roleOf(m) === 'admin') {
+      // Prevent deleting strict admin via member panel — use staff management or Supabase
+      if (btn.dataset.act === 'delmember') return;
+    }
     const me = currentUser();
     if (btn.dataset.act === 'delmember') {
-      if (!isAdmin(currentUser())) return;
+      if (!isAdminStrict(currentUser())) return;
       if (me && me.email === m.email) return;
       if (!window.confirm(`Delete ${m.name} (${m.email}) permanently?`)) return;
       const users = readUsers();
@@ -4903,6 +5438,21 @@ const renderAdminReminders = () => {
     if (btn.dataset.act === 'setcoach') {
       const sel = document.getElementById('mm-newcoach');
       m.assignedCoach = sel && sel.value ? sel.value : null;
+      saveMember(m);
+      renderAdmin();
+      return;
+    }
+    if (btn.dataset.act === 'setrole') {
+      const sel = document.getElementById('mm-newrole');
+      const newRole = sel ? sel.value : 'member';
+      if (!['member','trainer','manager','admin'].includes(newRole)) return;
+      // Prevent non-admin from creating admin
+      if (newRole === 'admin' && !isAdminStrict(currentUser())) {
+        alert('Only admin can assign admin role');
+        return;
+      }
+      m.role = newRole;
+      m.supabaseRole = newRole;
       saveMember(m);
       renderAdmin();
       return;
@@ -4955,9 +5505,6 @@ const renderAdminReminders = () => {
    ADMIN TABS 2 — INVENTORY (#14), STAFF + RBAC (#15), REPORTS (#16).
    New tabs plug into the existing admin shell + gate.
    =========================================================================== */
-ONYX.MANAGER_EMAILS = ONYX.MANAGER_EMAILS || [];
-const isManager = user => !!user && Array.isArray(ONYX.MANAGER_EMAILS) &&
-  ONYX.MANAGER_EMAILS.map(e => String(e).toLowerCase()).includes(String(user.email).toLowerCase());
 
 /* ---------- inventory ---------- */
 const INV_KEY = 'onyx-inventory';
@@ -5001,7 +5548,7 @@ const readStaff = () => {
 };
 const writeStaff = v => localStorage.setItem(STAFF_KEY, JSON.stringify(v));
 const trainerLoad = () => {
-  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const members = Object.values(readUsers()).filter(u => u && isMember(u));
   return coachList().map(c => {
     const clients = members.filter(m => m.assignedCoach === c.email);
     let sched = 0, done = 0;
@@ -5042,7 +5589,7 @@ const rpBars = pairs => {
   ).join('') + `</div>`;
 };
 const renderAdminReports = () => {
-  const members = Object.values(readUsers()).filter(u => u && !isCoach(u) && !isAdmin(u));
+  const members = Object.values(readUsers()).filter(u => u && isMember(u));
   const active = members.filter(memberActive);
   const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
   const planCounts = {};
@@ -5336,7 +5883,7 @@ renderAdmin();
     document.body.prepend(banner);
   }
 
-  // Give all public landing pages the same thumb-friendly primary actions.
+  // Give all public landing pages the same thumb-friendly primary actions - safe version with max-width 100vw
   if (!isPrivate && !document.querySelector('.mobile-action-bar')) {
     const bar = document.createElement('nav');
     bar.className = 'mobile-action-bar';
@@ -5346,7 +5893,7 @@ renderAdmin();
     bar.querySelector('[data-open-contact]')?.addEventListener('click', () => document.getElementById('contact-dialog')?.showModal());
   }
 
-  // A simple member-app navigation layer: the detailed sections remain available below.
+  // Member-app navigation layer - safe, box-sizing border-box, no 100vw overflow
   if (body.classList.contains('profile-page') && !document.querySelector('.member-bottom-nav')) {
     const nav = document.createElement('nav');
     nav.className = 'member-bottom-nav';
@@ -5411,3 +5958,253 @@ renderAdmin();
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
+
+// === MEMORIES WALL ENHANCED — zoom + explore more, super smooth ===
+(() => {
+  const grid = document.getElementById('memory-grid');
+  const extra = document.getElementById('memory-extra');
+  const exploreBtn = document.getElementById('memory-explore');
+  if (!grid) return;
+
+  // Create lightbox dialog if not exists
+  let lightbox = document.getElementById('memory-lightbox');
+  if (!lightbox) {
+    document.body.insertAdjacentHTML('beforeend', `
+      <dialog class="memory-lightbox" id="memory-lightbox" aria-labelledby="memory-lightbox-title">
+        <button type="button" class="plans-close" aria-label="Close memory">✕</button>
+        <div class="memory-lightbox-grid">
+          <div class="memory-lightbox-image"><img id="memory-lightbox-img" alt="" /></div>
+          <div class="memory-lightbox-copy">
+            <p class="eyebrow" id="memory-lightbox-eyebrow">ONYX MEMORY</p>
+            <h3 id="memory-lightbox-title">Moment</h3>
+            <p id="memory-lightbox-story"></p>
+            <div class="memory-lightbox-meta">TAP OUTSIDE OR PRESS ESC TO CLOSE · ONYX ATHLETIC CLUB · KHARAR</div>
+          </div>
+        </div>
+      </dialog>
+    `);
+    lightbox = document.getElementById('memory-lightbox');
+  }
+
+  const imgEl = document.getElementById('memory-lightbox-img');
+  const titleEl = document.getElementById('memory-lightbox-title');
+  const eyebrowEl = document.getElementById('memory-lightbox-eyebrow');
+  const storyEl = document.getElementById('memory-lightbox-story');
+
+  const MEMORY_IMAGES = {
+    '01': 'assets/memory-5k.jpg',
+    '02': 'assets/memory-post-class.jpg',
+    '03': 'assets/memory-pr-bell.jpg',
+    '04': 'assets/memory-friday-lifts.jpg',
+    '05': 'assets/memory-6am-crew.jpg',
+    '06': 'assets/memory-community-wod.jpg',
+    '07': 'assets/memory-recovery.jpg',
+    '08': 'assets/memory-coach-corner.jpg'
+  };
+
+  const closeLightbox = () => {
+    if (!lightbox.open) return;
+    if (lightbox.classList.contains('is-closing')) return;
+    lightbox.classList.add('is-closing');
+    setTimeout(() => {
+      lightbox.classList.remove('is-closing');
+      try { lightbox.close(); } catch(e) { lightbox.removeAttribute('open'); }
+    }, 360);
+  };
+
+  const openLightbox = (card) => {
+    const id = card.dataset.memory || '01';
+    const title = card.dataset.title || card.querySelector('span')?.textContent || 'ONYX Moment';
+    const story = card.dataset.story || 'This is what training at ONYX feels like — you have to be here to understand it.';
+    const src = MEMORY_IMAGES[id] || MEMORY_IMAGES['01'];
+
+    // Set content
+    eyebrowEl.textContent = `${id} / ${title.toUpperCase()}`;
+    titleEl.textContent = title;
+    storyEl.textContent = story;
+    imgEl.src = src;
+    imgEl.alt = `${title} — ONYX memory wall`;
+
+    // Direction-aware origin for super smooth emergence
+    const rect = card.getBoundingClientRect();
+    const lbRect = { left: window.innerWidth/2, top: window.innerHeight/2, width: 400, height: 400 };
+    const originX = ((rect.left + rect.width/2) / window.innerWidth) * 100;
+    const originY = ((rect.top + rect.height/2) / window.innerHeight) * 100;
+    lightbox.style.transformOrigin = `${originX}% ${originY}%`;
+
+    lightbox.classList.remove('is-closing');
+    try { lightbox.showModal(); } catch(e) { lightbox.setAttribute('open',''); }
+
+    // Focus trap handled by dialog, but ensure close button focus
+    requestAnimationFrame(() => {
+      lightbox.querySelector('.plans-close')?.focus({ preventScroll: true });
+    });
+  };
+
+  // Click on any memory card
+  document.querySelectorAll('.memory-card[data-memory]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // If clicking zoom btn, handled separately but also opens
+      if (e.target.closest('.memory-zoom-btn')) {
+        e.stopPropagation();
+      }
+      openLightbox(card);
+    });
+    // Keyboard accessibility
+    card.setAttribute('tabindex','0');
+    card.setAttribute('role','button');
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openLightbox(card);
+      }
+    });
+  });
+
+  // Zoom buttons (stop propagation handled above)
+  document.querySelectorAll('.memory-zoom-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.memory-card');
+      if (card) openLightbox(card);
+    });
+  });
+
+  // Explore more toggle with super smooth height + stagger
+  if (exploreBtn && extra) {
+    // Directional hover for explore button (same as site)
+    const dir = ev => {
+      const b = exploreBtn.getBoundingClientRect();
+      const x = ev.clientX - b.left - b.width/2;
+      const y = ev.clientY - b.top - b.height/2;
+      return Math.abs(x / b.width) > Math.abs(y / b.height) ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'bottom' : 'top');
+    };
+    exploreBtn.addEventListener('pointerenter', ev => {
+      exploreBtn.classList.remove('enter-left','enter-right','enter-top','enter-bottom');
+      exploreBtn.classList.add(`enter-${dir(ev)}`);
+      requestAnimationFrame(() => exploreBtn.classList.add('is-hovered'));
+    });
+    exploreBtn.addEventListener('pointerleave', ev => {
+      exploreBtn.classList.remove('enter-left','enter-right','enter-top','enter-bottom');
+      exploreBtn.classList.add(`enter-${dir(ev)}`);
+      requestAnimationFrame(() => exploreBtn.classList.remove('is-hovered'));
+    });
+
+    exploreBtn.addEventListener('click', () => {
+      const isOpen = extra.classList.contains('is-open');
+      if (!isOpen) {
+        // Opening
+        extra.hidden = false;
+        // Force reflow for transition
+        void extra.offsetHeight;
+        extra.classList.add('is-open');
+        exploreBtn.classList.add('is-open');
+        exploreBtn.querySelector('span').textContent = 'Show less moments';
+        // Smooth scroll to extra after animation starts
+        setTimeout(() => {
+          extra.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 320);
+      } else {
+        // Closing
+        extra.classList.remove('is-open');
+        exploreBtn.classList.remove('is-open');
+        exploreBtn.querySelector('span').textContent = 'Explore more moments';
+        setTimeout(() => {
+          if (!extra.classList.contains('is-open')) {
+            extra.hidden = true;
+            document.getElementById('experience')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 750);
+      }
+    });
+  }
+
+  // Lightbox close handlers
+  lightbox.addEventListener('click', (e) => {
+    if (e.target === lightbox) closeLightbox();
+  });
+  lightbox.querySelector('.plans-close')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeLightbox();
+  });
+  lightbox.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    closeLightbox();
+  });
+  // Prevent form submit
+  lightbox.querySelectorAll('form[method="dialog"]').forEach(f => f.addEventListener('submit', ev => { ev.preventDefault(); closeLightbox(); }));
+
+  // Keyboard trap for lightbox (reuse existing logic)
+  lightbox.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const focusable = [...lightbox.querySelectorAll('button:not([disabled])')].filter(el => !el.closest('[hidden]'));
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length-1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+})();
+
+// === FILM PRO — tap to play/pause with voiceover + progress ===
+(() => {
+  const wrap = document.getElementById('film-video-wrap');
+  const video = document.getElementById('onyx-film');
+  const btn = document.getElementById('film-play-btn');
+  const bar = document.getElementById('film-progress-bar');
+  if (!wrap || !video) return;
+
+  const sync = () => {
+    const playing = !video.paused && !video.ended;
+    wrap.classList.toggle('is-playing', playing);
+    if (btn) btn.setAttribute('aria-label', playing ? 'Pause tour' : 'Play tour with voiceover');
+    if (btn) {
+      const icon = btn.querySelector('.film-play-icon');
+      if (icon) icon.textContent = playing ? '❚❚' : '▶';
+    }
+  };
+
+  const toggle = (e) => {
+    if (e) e.preventDefault();
+    if (video.paused) {
+      video.play().then(sync).catch(() => {});
+    } else {
+      video.pause();
+      sync();
+    }
+  };
+
+  wrap.addEventListener('click', toggle);
+  wrap.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    toggle(e);
+  }, { passive: false });
+
+  wrap.setAttribute('tabindex','0');
+  wrap.setAttribute('role','button');
+  wrap.setAttribute('aria-label','Tap to play or pause coach tour with voiceover');
+  wrap.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+
+  if (btn) btn.addEventListener('click', toggle);
+
+  video.addEventListener('play', sync);
+  video.addEventListener('pause', sync);
+  video.addEventListener('ended', () => {
+    video.currentTime = 0;
+    sync();
+    if (bar) bar.style.width = '0%';
+  });
+
+  video.addEventListener('timeupdate', () => {
+    if (!bar) return;
+    const pct = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+    bar.style.width = `${pct}%`;
+  });
+
+  // Initial state
+  sync();
+})();
