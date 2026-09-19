@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ONYX Diagnostics</title>
+  <style>
+    :root{--bg:#071616;--card:#102425;--text:#e8e5dc;--muted:#9fb0aa;--ok:#68f5a6;--warn:#ffd166;--bad:#ff6b6b;--line:rgba(232,229,220,.12)}
+    *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1100px;margin:0 auto;padding:32px 20px 80px}.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+    h1{margin:0 0 6px;font-size:32px}.muted{color:var(--muted)} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px;margin-top:24px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px}.card h2{margin:0 0 12px;font-size:18px}
+    .row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)} .row:first-child{border-top:0;padding-top:0}
+    .name{font-weight:600}.meta{font-size:12px;color:var(--muted);margin-top:4px;word-break:break-word}
+    .badge{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}.ok{background:rgba(104,245,166,.16);color:var(--ok)}.warn{background:rgba(255,209,102,.16);color:var(--warn)}.bad{background:rgba(255,107,107,.16);color:var(--bad)}
+    pre{white-space:pre-wrap;word-break:break-word;background:#091819;border:1px solid var(--line);padding:12px;border-radius:12px;font-size:12px;max-height:260px;overflow:auto}
+    button{background:#d6fe37;color:#071616;border:0;padding:12px 16px;border-radius:12px;font-weight:800;cursor:pointer}.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}.summary{margin-top:18px;padding:14px 16px;border-radius:14px;border:1px solid var(--line);background:#0c1d1e}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h1>ONYX diagnostics</h1>
+        <div class="muted">Runs live checks from your browser against this deployed Supabase project and this preview origin.</div>
+      </div>
+      <div class="actions">
+        <button id="run">Run checks</button>
+        <button id="rerun-auth" class="ghost">Re-run auth-only</button>
+      </div>
+    </div>
+    <div id="summary" class="summary muted">Waiting to run checks…</div>
+    <div class="grid">
+      <section class="card"><h2>Environment</h2><div id="env"></div></section>
+      <section class="card"><h2>Public checks</h2><div id="public"></div></section>
+      <section class="card"><h2>Authenticated checks</h2><div id="auth"></div></section>
+    </div>
+    <section class="card" style="margin-top:16px">
+      <h2>Raw log</h2>
+      <pre id="log">No checks run yet.</pre>
+    </section>
+  </div>
+  <script>
+    const el = id => document.getElementById(id);
+    const logLines = [];
+    const pushLog = (...parts) => { logLines.push(parts.join(' ')); el('log').textContent = logLines.join('\n'); };
+    const addRow = (target, name, status, meta='') => {
+      const tone = status === 'PASS' ? 'ok' : status === 'WARN' ? 'warn' : 'bad';
+      const row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = `<div><div class="name">${name}</div><div class="meta">${meta || ''}</div></div><span class="badge ${tone}">${status}</span>`;
+      target.appendChild(row);
+    };
+    const clearSections = () => ['env','public','auth'].forEach(id => el(id).innerHTML='');
+    const esc = s => String(s ?? '');
+
+    async function getConfig(){
+      const text = await fetch('script.js?v=' + Date.now()).then(r => r.text());
+      const pick = key => (text.match(new RegExp(`${key}:\\s*'([^']+)'`)) || [,''])[1];
+      return {
+        url: pick('SUPABASE_URL').replace(/\/$/, ''),
+        key: pick('SUPABASE_KEY'),
+        verify: pick('MEMBERSHIP_VERIFY_ENDPOINT')
+      };
+    }
+
+    function currentLocalUser(){
+      try {
+        const email = localStorage.getItem('onyx-session');
+        const users = JSON.parse(localStorage.getItem('onyx-users') || '{}');
+        return email && users[email] ? users[email] : null;
+      } catch { return null; }
+    }
+
+    async function api(url, options={}){
+      const res = await fetch(url, options);
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      return { status: res.status, ok: res.ok, data };
+    }
+
+    async function run(authOnly=false){
+      clearSections();
+      logLines.length = 0;
+      const summary = el('summary');
+      summary.textContent = 'Running diagnostics…';
+      const publicBox = el('public'), authBox = el('auth'), envBox = el('env');
+      const config = await getConfig();
+      const user = currentLocalUser();
+      const role = user ? String(user.supabaseRole || user.role || 'member') : 'guest';
+      addRow(envBox, 'Preview origin', 'PASS', location.origin);
+      addRow(envBox, 'Supabase URL', config.url ? 'PASS' : 'FAIL', config.url || 'Missing');
+      addRow(envBox, 'Supabase key', config.key ? 'PASS' : 'FAIL', config.key ? 'Publishable key found' : 'Missing');
+      addRow(envBox, 'Current local session', user ? 'PASS' : 'WARN', user ? `${user.email} · ${role}` : 'No signed-in preview session found');
+      pushLog('Config', JSON.stringify({url: config.url, verify: config.verify, user: user ? user.email : null, role}));
+
+      const anonHeaders = config.key ? {apikey: config.key, Authorization: `Bearer ${config.key}`, Accept: 'application/json'} : {};
+      if (!authOnly) {
+        const site = await api(`${config.url}/rest/v1/site_content?id=eq.1&select=payload`, { headers: anonHeaders });
+        addRow(publicBox, 'Public site_content read', site.ok ? 'PASS' : 'FAIL', `HTTP ${site.status}`);
+        pushLog('site_content', site.status, JSON.stringify(site.data).slice(0,300));
+
+        const stamp = Date.now();
+        const lead = await api(`${config.url}/rest/v1/leads`, {
+          method:'POST',
+          headers:{...anonHeaders, 'Content-Type':'application/json', Prefer:'return=representation'},
+          body: JSON.stringify({
+            name:`Diagnostics Lead ${stamp}`,
+            phone:'+919876543210',
+            source:'website',
+            plan:'General',
+            goal:'Diagnostics',
+            experience:'Testing',
+            consent:true,
+            status:'lead',
+            notes:'Browser diagnostics check'
+          })
+        });
+        addRow(publicBox, 'Public lead insert', lead.ok ? 'PASS' : 'FAIL', `HTTP ${lead.status}`);
+        pushLog('lead insert', lead.status, JSON.stringify(lead.data).slice(0,300));
+
+        const booking = await api(`${config.url}/rest/v1/bookings`, {
+          method:'POST',
+          headers:{...anonHeaders, 'Content-Type':'application/json', Prefer:'return=representation'},
+          body: JSON.stringify({
+            name:`Diagnostics Booking ${stamp}`,
+            phone:'+919876543210',
+            booking_type:'free_trial',
+            preferred_date:'2026-10-01',
+            preferred_time:'6:00–9:00 am',
+            goal:'Testing',
+            experience:'Testing'
+          })
+        });
+        addRow(publicBox, 'Public booking insert', booking.ok ? 'PASS' : 'FAIL', `HTTP ${booking.status}`);
+        pushLog('booking insert', booking.status, JSON.stringify(booking.data).slice(0,300));
+
+        const verify = await api(config.verify, {
+          method:'POST',
+          headers:{...anonHeaders, 'Content-Type':'application/json'},
+          body: JSON.stringify({ plan:'Monthly membership' })
+        });
+        addRow(publicBox, 'verify-payment deployed', verify.status === 404 ? 'FAIL' : 'PASS', `HTTP ${verify.status}`);
+        pushLog('verify-payment', verify.status, JSON.stringify(verify.data).slice(0,300));
+      }
+
+      if (!user || !user.supabaseToken) {
+        addRow(authBox, 'Authenticated checks', 'WARN', 'Sign into the preview first, then re-run to test staff/member permissions.');
+        summary.textContent = 'Public diagnostics completed. Authenticated diagnostics need an active preview session.';
+        return;
+      }
+
+      const authHeaders = {apikey: config.key, Authorization: `Bearer ${user.supabaseToken}`, Accept:'application/json'};
+      const ownProfile = await api(`${config.url}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}&select=id,full_name,role,assigned_coach_email,suspended,app_data`, { headers: authHeaders });
+      addRow(authBox, 'Own profile read', ownProfile.ok ? 'PASS' : 'FAIL', `HTTP ${ownProfile.status}`);
+      pushLog('own profile', ownProfile.status, JSON.stringify(ownProfile.data).slice(0,500));
+
+      const leadsRead = await api(`${config.url}/rest/v1/leads?select=id&limit=1`, { headers: authHeaders });
+      const shouldStaffRead = ['admin','manager','trainer','coach'].includes(role);
+      addRow(authBox, 'Leads permission', (shouldStaffRead ? leadsRead.ok : !leadsRead.ok) ? 'PASS' : 'FAIL', `HTTP ${leadsRead.status}`);
+      pushLog('leads read', leadsRead.status, JSON.stringify(leadsRead.data).slice(0,300));
+
+      const invRead = await api(`${config.url}/rest/v1/inventory_items?select=id&limit=1`, { headers: authHeaders });
+      const shouldInvRead = ['admin','manager'].includes(role);
+      addRow(authBox, 'Inventory permission', (shouldInvRead ? invRead.ok : !invRead.ok) ? 'PASS' : 'FAIL', `HTTP ${invRead.status}`);
+      pushLog('inventory read', invRead.status, JSON.stringify(invRead.data).slice(0,300));
+
+      const staffRead = await api(`${config.url}/rest/v1/staff_directory?select=id&limit=1`, { headers: authHeaders });
+      const shouldStaffDirectoryRead = role === 'admin';
+      addRow(authBox, 'Staff directory permission', (shouldStaffDirectoryRead ? staffRead.ok : !staffRead.ok) ? 'PASS' : 'FAIL', `HTTP ${staffRead.status}`);
+      pushLog('staff_directory read', staffRead.status, JSON.stringify(staffRead.data).slice(0,300));
+
+      const roster = await api(`${config.url}/functions/v1/admin-members`, { headers: authHeaders });
+      const shouldRoster = ['admin','manager','trainer','coach'].includes(role);
+      addRow(authBox, 'admin-members function', (shouldRoster ? roster.ok : !roster.ok) ? 'PASS' : 'FAIL', `HTTP ${roster.status}`);
+      pushLog('admin-members', roster.status, JSON.stringify(roster.data).slice(0,500));
+
+      const write = await api(`${config.url}/functions/v1/admin-member-write`, {
+        method:'POST',
+        headers:{apikey: config.key, Authorization: `Bearer ${user.supabaseToken}`, 'Content-Type':'application/json'},
+        body: JSON.stringify({ action:'set_role', email:'does-not-exist@example.com', role:'member' })
+      });
+      const shouldWrite = ['admin','manager'].includes(role);
+      const writePass = shouldWrite ? (write.status !== 403 && write.status !== 401 && write.status !== 404 ? write.ok : write.status === 404) : (!write.ok && (write.status === 403 || write.status === 401));
+      addRow(authBox, 'admin-member-write auth gate', writePass ? 'PASS' : 'FAIL', `HTTP ${write.status}`);
+      pushLog('admin-member-write', write.status, JSON.stringify(write.data).slice(0,500));
+
+      const allRows = [...document.querySelectorAll('.badge')];
+      const fail = allRows.filter(x => x.textContent === 'FAIL').length;
+      const warn = allRows.filter(x => x.textContent === 'WARN').length;
+      summary.textContent = fail ? `Diagnostics completed with ${fail} failing check(s) and ${warn} warning(s). Scroll for details.` : `Diagnostics completed successfully${warn ? ` with ${warn} warning(s)` : ''}.`;
+    }
+
+    el('run').addEventListener('click', () => run(false));
+    el('rerun-auth').addEventListener('click', () => run(true));
+    run(false).catch(err => {
+      el('summary').textContent = 'Diagnostics crashed: ' + err.message;
+      pushLog('CRASH', err.stack || err.message);
+    });
+  </script>
+</body>
+</html>

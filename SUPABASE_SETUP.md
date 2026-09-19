@@ -35,6 +35,40 @@ The storage policies and signed-upload flow should be added only after the accou
 
 The publishable Supabase key belongs in browser code. Never put the Supabase service-role key in this repository or frontend.
 
+## Shared admin member list across devices (admin-members edge function)
+
+The admin login already comes from Supabase, but the old demo member list only
+lived in each browser's localStorage. To make **phone and laptop show the same
+users**, deploy the shared roster function once:
+
+1. **Edge Functions** → **New function**
+2. Name: `admin-members`
+3. Body: paste `supabase/functions/admin-members/index.ts`
+4. **Deploy** with **Verify JWT ON**
+
+No extra secrets are needed. The frontend calls it automatically when a
+staff user is signed in with a real Supabase session.
+
+Before deploying the new shared edit flow, **re-run `supabase-schema.sql`** in
+SQL Editor once so the added `profiles` columns and shared tables exist
+(`app_data`, `assigned_coach_email`, `suspended`, payment/meta fields,
+`inventory_items`, `staff_directory`, `site_content`, lead extensions). The
+file is idempotent.
+
+To make admin edits shared too, deploy one more function:
+
+1. **Edge Functions** → **New function**
+2. Name: `admin-member-write`
+3. Body: paste `supabase/functions/admin-member-write/index.ts`
+4. **Deploy** with **Verify JWT ON**
+
+That enables shared create member, set role, set plan, renew, confirm payment,
+and delete actions. If it is not deployed, those actions still work only on the
+old browser-local demo data.
+
+If the function is not deployed yet, the admin dashboard falls back to the old
+browser-local demo list and different devices may still show different users.
+
 ## Payment auto-confirmation (verify-payment edge function)
 
 The site no longer activates memberships from the browser. The moment Razorpay

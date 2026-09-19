@@ -16,8 +16,8 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 | `about.html` | Philosophy, values, coaches, milestones |
 | `privacy.html` | Privacy policy, membership terms, refund policy |
 | `weight-loss.html` … `membership.html` | 5 SEO landing pages — unique titles/descs, Service + FAQPage schema, lead-capture dialog, in sitemap |
-| `admin.html` | Admin control center — gated by `ADMIN_EMAILS`; revenue/members overview, member management (add/renew/plan/trainer/suspend/delete), lead CRM with pipeline + conversion, reminder queues with WhatsApp actions, inventory, staff + roles, reports, mini-CMS (same-browser demo) |
-| `trainers.html` | Trainer dashboard — gated by `COACH_EMAILS`; client files, program assign/modify/build, diet plans + client intake review, sessions + availability, goals, measurements, PRs, notes, messages, attendance + photo review (same-browser demo) |
+| `admin.html` | Admin control center — revenue/members overview, member management, lead CRM, reminders, inventory, staff + roles, reports, mini-CMS. Shared cross-device members use `admin-members` + `admin-member-write`; inventory, staff directory, leads, and site content sync through Supabase tables when the updated schema is deployed. |
+| `trainers.html` | Trainer dashboard — gated by `COACH_EMAILS`; client files, program assign/modify/build, diet plans + client intake review, sessions + availability, goals, measurements, PRs, notes, messages, attendance + photo review. Shared member data syncs through Supabase when the shared edge functions are deployed; otherwise it falls back to same-browser demo data. |
 | `profile.html` | Member dashboard — membership, today overview, training, diet plans + calorie tracker + food database, programs, progress photos, attendance, coach corner, AI assistant, personal goals, challenges & leaderboards, notification center, PT booking |
 | `404.html` | Not-found page |
 
