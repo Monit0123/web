@@ -900,7 +900,7 @@ const showPaymentPending = payment => {
       confirmation.querySelector('h3').innerHTML = `Payment<br/><em>confirmed.</em>`;
       if (copyEl) copyEl.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Welcome to ONYX — your training week and diet plan are unlocked.`;
       note.innerHTML = `✅ Activated via <strong>${user.lastPayment?.source || 'local'}</strong> · Ref <strong>${user.lastPayment?.ref}</strong>${user.lastPayment?.paymentId ? ` · ID ${esc(String(user.lastPayment.paymentId).slice(0, 20))}` : ''}`;
-      actions.innerHTML = `<button type="button" class="solid-button directional-tile" id="go-profile"><span>Go to my profile</span><b>→</b></button>`;
+      actions.innerHTML = `<button type="button" class="solid-button directional-tile" id="go-profile"><span>Go to my profile</span><b class="arrow-icon" aria-hidden="true">→</b></button>`;
       const goBtn = actions.querySelector('#go-profile');
       if (goBtn) goBtn.onclick = () => { dialog.close(); window.location.href = 'profile.html'; };
       renderProfile();
@@ -918,7 +918,7 @@ const showPaymentPending = payment => {
   waBtn.target = '_blank';
   waBtn.rel = 'noopener';
   waBtn.href = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}`;
-  waBtn.innerHTML = `<span>WhatsApp us</span><b>↗</b>`;
+  waBtn.innerHTML = `<span>WhatsApp us</span><b class="arrow-icon" aria-hidden="true">→</b>`;
 
   actions.appendChild(verifyBtn);
   if (!ONYX.DEMO_MODE) actions.appendChild(waBtn);
@@ -969,7 +969,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             let note = confirmation.querySelector('.payment-ref');
             if (note) note.innerHTML = `✅ Auto-confirmed · Ref <strong>${user.lastPayment?.ref}</strong> · Razorpay ID <strong>${esc(String(paymentId || '').slice(0, 24))}</strong>`;
             let actions = confirmation.querySelector('.payment-actions');
-            if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b>→</b></button>`;
+            if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b class="arrow-icon" aria-hidden="true">→</b></button>`;
           }
           if (!dialog.open) dialog.showModal();
         }
@@ -1359,10 +1359,13 @@ const renderProfile = () => {
   if (!user) {
     empty.hidden = training.hidden = diet.hidden = true;
     if (memberGate) memberGate.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking', 'profile-more'].forEach(id => {
       const section = document.getElementById(id);
       if (section) section.hidden = true;
     });
+    // Hide member bottom nav for logged-out users (broken overflow fix)
+    const _mNav = document.querySelector('.member-bottom-nav');
+    if (_mNav) _mNav.hidden = true;
     return;
   }
 
@@ -1376,7 +1379,7 @@ const renderProfile = () => {
     if (memberGate) memberGate.hidden = true;
     training.hidden = true;
     diet.hidden = true;
-    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking'].forEach(id => {
+    ['profile-membership', 'profile-today', 'profile-library', 'profile-progress', 'profile-attendance', 'profile-coach', 'profile-goals', 'profile-challenges', 'profile-notifs', 'profile-booking', 'profile-more'].forEach(id => {
       const s = document.getElementById(id);
       if (s) s.hidden = true;
     });
@@ -1935,6 +1938,11 @@ const renderDashboard = user => {
   renderBooking(user);
   renderCoachSection(user);
   renderProgress(user).catch(() => {});
+  // Ensure More hub is visible for members (fixes broken #profile-more anchor)
+  const moreSection = document.getElementById('profile-more');
+  if (moreSection) moreSection.hidden = false;
+  const mNav = document.querySelector('.member-bottom-nav');
+  if (mNav) mNav.hidden = false;
 };
 
 /* ---------- dashboard events (bound once) ---------- */
@@ -5900,6 +5908,24 @@ renderAdmin();
     nav.setAttribute('aria-label', 'Member app navigation');
     nav.innerHTML = `<a href="#profile-today"><b>⌂</b><span>Today</span></a><a href="#profile-training"><b>▤</b><span>Plan</span></a><a href="#profile-progress"><b>◉</b><span>Progress</span></a><a href="#profile-coach"><b>✦</b><span>Coach</span></a><a href="#profile-more"><b>⋯</b><span>More</span></a>`;
     document.body.appendChild(nav);
+    // Initially hidden until auth state known (prevents overlap on gate)
+    nav.hidden = true;
+    // Smooth scroll + active state handling for broken anchor fix
+    nav.querySelectorAll('a[href^="#"]').forEach(a => a.addEventListener('click', e => {
+      const href = a.getAttribute('href');
+      const target = href && document.querySelector(href);
+      if (target && !target.hidden) {
+        e.preventDefault();
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        history.replaceState(null, '', href);
+      }
+    }));
+    const syncActiveNav = () => {
+      const hash = window.location.hash || '#profile-today';
+      nav.querySelectorAll('a').forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === hash));
+    };
+    window.addEventListener('hashchange', syncActiveNav);
+    syncActiveNav();
   }
 
   // Do not silently pretend the app is online or that a request was delivered.
