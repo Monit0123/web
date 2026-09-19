@@ -900,7 +900,7 @@ const showPaymentPending = payment => {
       confirmation.querySelector('h3').innerHTML = `Payment<br/><em>confirmed.</em>`;
       if (copyEl) copyEl.textContent = `${user.plan} is now active till ${fmtDate(user.expiresAt)}. Welcome to ONYX — your training week and diet plan are unlocked.`;
       note.innerHTML = `✅ Activated via <strong>${user.lastPayment?.source || 'local'}</strong> · Ref <strong>${user.lastPayment?.ref}</strong>${user.lastPayment?.paymentId ? ` · ID ${esc(String(user.lastPayment.paymentId).slice(0, 20))}` : ''}`;
-      actions.innerHTML = `<button type="button" class="solid-button directional-tile" id="go-profile"><span>Go to my profile</span><b>→</b></button>`;
+      actions.innerHTML = `<button type="button" class="solid-button directional-tile" id="go-profile"><span>Go to my profile</span><b class="arrow-icon" aria-hidden="true">→</b></button>`;
       const goBtn = actions.querySelector('#go-profile');
       if (goBtn) goBtn.onclick = () => { dialog.close(); window.location.href = 'profile.html'; };
       renderProfile();
@@ -918,7 +918,7 @@ const showPaymentPending = payment => {
   waBtn.target = '_blank';
   waBtn.rel = 'noopener';
   waBtn.href = `https://wa.me/${ONYX.WHATSAPP}?text=${encodeURIComponent('Hi ONYX, I just paid for ' + payment.plan + '. My reference is ' + payment.ref + '.')}`;
-  waBtn.innerHTML = `<span>WhatsApp us</span><b>↗</b>`;
+  waBtn.innerHTML = `<span>WhatsApp us</span><b class="arrow-icon" aria-hidden="true">→</b>`;
 
   actions.appendChild(verifyBtn);
   if (!ONYX.DEMO_MODE) actions.appendChild(waBtn);
@@ -969,7 +969,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             let note = confirmation.querySelector('.payment-ref');
             if (note) note.innerHTML = `✅ Auto-confirmed · Ref <strong>${user.lastPayment?.ref}</strong> · Razorpay ID <strong>${esc(String(paymentId || '').slice(0, 24))}</strong>`;
             let actions = confirmation.querySelector('.payment-actions');
-            if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b>→</b></button>`;
+            if (actions) actions.innerHTML = `<button type="button" class="solid-button directional-tile" onclick="window.location.href='profile.html'"><span>Go to my profile</span><b class="arrow-icon" aria-hidden="true">→</b></button>`;
           }
           if (!dialog.open) dialog.showModal();
         }

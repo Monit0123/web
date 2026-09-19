@@ -6,7 +6,7 @@
 @media(max-width:720px){.trainer-card{height:410px;min-width:78vw}.community-copy h2{font-size:clamp(3.4rem,14vw,4.7rem)}}
 
 /* ONYX athletic club */
-.onyx-brand .site-header nav{margin-left:6vw}.onyx-brand .hero-copy{top:23%}.onyx-brand .hero-shade{background:linear-gradient(90deg,rgba(2,12,14,.91) 0%,rgba(2,12,14,.67) 38%,rgba(2,12,14,.05) 73%),linear-gradient(0deg,rgba(2,12,14,.6),transparent 42%)}.hero-actions{display:flex;align-items:center;gap:25px}.solid-button{background:var(--lime);color:var(--ink);padding:19px 22px;text-transform:uppercase;font-size:10px;letter-spacing:.12em;text-decoration:none;font-weight:700}.solid-button b,.ghost-button b{margin-left:20px;font-size:16px}.ghost-button{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-decoration:none}.manifesto{padding:132px 8vw 145px;background:#e9e5dc;color:var(--ink);display:grid;grid-template-columns:1fr 1.6fr;position:relative}.manifesto>p{grid-column:1/-1;font:10px 'DM Mono';letter-spacing:.13em;margin:0 0 100px;color:#536059}.manifesto h2{font-size:clamp(4rem,7vw,7.8rem);margin:0}.manifesto-copy{align-self:end;max-width:350px}.manifesto-copy p{line-height:1.7;font-size:15px;margin-bottom:34px}.pillars{display:grid;grid-template-columns:repeat(3,1fr);min-height:700px}.pillar{position:relative;padding:35px 34px;display:flex;flex-direction:column;color:#fff;overflow:hidden;background:#213431}.pillar:before{content:'';position:absolute;inset:0;opacity:.32;transition:.5s transform,.5s opacity;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/gym-hero.jpg?v=64') center/cover}.pillar:hover:before{transform:scale(1.08);opacity:.55}.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-strength.jpg?v=64')}.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-conditioning.jpg?v=64')}.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-recovery.jpg?v=64')}.pillar>*{position:relative;z-index:1}.pillar>span{font:10px 'DM Mono';letter-spacing:.1em}.pillar h2{font-size:clamp(3rem,4.3vw,5rem);margin:auto 0 16px}.pillar p{font-size:13px;line-height:1.6;max-width:280px;margin:0 0 25px;color:#e5e9e4}.pillar a{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.6);padding-bottom:8px;width:max-content}.pillar a b{font-size:15px;margin-left:20px}.proof{background:#102d2b}.proof .eyebrow{color:var(--lime)}.proof-grid{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:60px}.proof-grid div{padding:27px 25px 25px 0;border-right:1px solid var(--line)}.proof-grid div+div{padding-left:25px}.proof-grid div:last-child{border:0}.proof-grid strong{font-size:clamp(3.2rem,5.4vw,6rem);letter-spacing:-.09em;line-height:1}.proof-grid strong span{color:var(--lime)}.proof-grid p{font:10px/1.5 'DM Mono';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:20px 0 0}.method{display:grid;grid-template-columns:1.1fr .9fr;background:#cbd4cd;color:var(--ink)}.method-image{min-height:730px;background:linear-gradient(0deg,rgba(5,22,20,.36),transparent),url('assets/method.jpg') center 30%/cover;filter:saturate(.7)}.method-copy{padding:8vw;display:flex;flex-direction:column;justify-content:center}.method-copy h2{font-size:clamp(3.5rem,5.4vw,6rem);margin-bottom:31px}.method-copy>p:not(.eyebrow){font-size:14px;line-height:1.7;max-width:330px;margin-bottom:35px}.ways{background:#e9e5dc;color:var(--ink)}.ways-title{display:grid;grid-template-columns:1.5fr .5fr;align-items:end;margin-bottom:80px}.ways-title h2{font-size:clamp(3.8rem,6.4vw,6.8rem);margin:0}.ways-title p{font-size:14px;line-height:1.7;margin:0;max-width:270px}.ways-list{border-top:1px solid #9da69e}.ways-list a{display:grid;grid-template-columns:80px 1fr auto;align-items:center;border-bottom:1px solid #9da69e;padding:20px 0;color:var(--ink);text-decoration:none;font-size:clamp(1.7rem,3.5vw,3.5rem);letter-spacing:-.055em;transition:.2s padding,.2s color}.ways-list a:hover{padding-left:16px;color:#38612b}.ways-list span{font:10px 'DM Mono';letter-spacing:.1em}.ways-list b{font-size:22px;font-weight:400}.onyx-brand .closing h2 em{display:inline}.onyx-brand .membership{background:#e9e5dc}.onyx-brand .membership .eyebrow{color:#54635d}
+.onyx-brand .site-header nav{margin-left:6vw}.onyx-brand .hero-copy{top:23%}.onyx-brand .hero-shade{background:linear-gradient(90deg,rgba(2,12,14,.91) 0%,rgba(2,12,14,.67) 38%,rgba(2,12,14,.05) 73%),linear-gradient(0deg,rgba(2,12,14,.6),transparent 42%)}.hero-actions{display:flex;align-items:center;gap:25px}.solid-button{background:var(--lime);color:var(--ink);padding:19px 22px;text-transform:uppercase;font-size:10px;letter-spacing:.12em;text-decoration:none;font-weight:700}.solid-button b,.ghost-button b{margin-left:20px;font-size:16px}.ghost-button{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-decoration:none}.manifesto{padding:132px 8vw 145px;background:#e9e5dc;color:var(--ink);display:grid;grid-template-columns:1fr 1.6fr;position:relative}.manifesto>p{grid-column:1/-1;font:10px 'DM Mono';letter-spacing:.13em;margin:0 0 100px;color:#536059}.manifesto h2{font-size:clamp(4rem,7vw,7.8rem);margin:0}.manifesto-copy{align-self:end;max-width:350px}.manifesto-copy p{line-height:1.7;font-size:15px;margin-bottom:34px}.pillars{display:grid;grid-template-columns:repeat(3,1fr);min-height:700px}.pillar{position:relative;padding:35px 34px;display:flex;flex-direction:column;color:#fff;overflow:hidden;background:#213431}.pillar:before{content:'';position:absolute;inset:0;opacity:.32;transition:.5s transform,.5s opacity;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/gym-hero.jpg?v=65') center/cover}.pillar:hover:before{transform:scale(1.08);opacity:.55}.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-strength.jpg?v=65')}.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-conditioning.jpg?v=65')}.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-recovery.jpg?v=65')}.pillar>*{position:relative;z-index:1}.pillar>span{font:10px 'DM Mono';letter-spacing:.1em}.pillar h2{font-size:clamp(3rem,4.3vw,5rem);margin:auto 0 16px}.pillar p{font-size:13px;line-height:1.6;max-width:280px;margin:0 0 25px;color:#e5e9e4}.pillar a{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.6);padding-bottom:8px;width:max-content}.pillar a b{font-size:15px;margin-left:20px}.proof{background:#102d2b}.proof .eyebrow{color:var(--lime)}.proof-grid{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:60px}.proof-grid div{padding:27px 25px 25px 0;border-right:1px solid var(--line)}.proof-grid div+div{padding-left:25px}.proof-grid div:last-child{border:0}.proof-grid strong{font-size:clamp(3.2rem,5.4vw,6rem);letter-spacing:-.09em;line-height:1}.proof-grid strong span{color:var(--lime)}.proof-grid p{font:10px/1.5 'DM Mono';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:20px 0 0}.method{display:grid;grid-template-columns:1.1fr .9fr;background:#cbd4cd;color:var(--ink)}.method-image{min-height:730px;background:linear-gradient(0deg,rgba(5,22,20,.36),transparent),url('assets/method.jpg') center 30%/cover;filter:saturate(.7)}.method-copy{padding:8vw;display:flex;flex-direction:column;justify-content:center}.method-copy h2{font-size:clamp(3.5rem,5.4vw,6rem);margin-bottom:31px}.method-copy>p:not(.eyebrow){font-size:14px;line-height:1.7;max-width:330px;margin-bottom:35px}.ways{background:#e9e5dc;color:var(--ink)}.ways-title{display:grid;grid-template-columns:1.5fr .5fr;align-items:end;margin-bottom:80px}.ways-title h2{font-size:clamp(3.8rem,6.4vw,6.8rem);margin:0}.ways-title p{font-size:14px;line-height:1.7;margin:0;max-width:270px}.ways-list{border-top:1px solid #9da69e}.ways-list a{display:grid;grid-template-columns:80px 1fr auto;align-items:center;border-bottom:1px solid #9da69e;padding:20px 0;color:var(--ink);text-decoration:none;font-size:clamp(1.7rem,3.5vw,3.5rem);letter-spacing:-.055em;transition:.2s padding,.2s color}.ways-list a:hover{padding-left:16px;color:#38612b}.ways-list span{font:10px 'DM Mono';letter-spacing:.1em}.ways-list b{font-size:22px;font-weight:400}.onyx-brand .closing h2 em{display:inline}.onyx-brand .membership{background:#e9e5dc}.onyx-brand .membership .eyebrow{color:#54635d}
 @media(max-width:720px){.onyx-brand .site-header nav{display:none}.hero-actions{gap:18px;flex-wrap:wrap}.manifesto{display:block;padding:85px 6vw}.manifesto>p{margin-bottom:50px;line-height:1.6}.manifesto-copy{margin-top:35px}.pillars{grid-template-columns:1fr}.pillar{min-height:440px}.proof-grid{grid-template-columns:repeat(2,1fr);gap:0}.proof-grid div:nth-child(2){border-right:0}.proof-grid div:nth-child(n+3){border-top:1px solid var(--line);padding-top:27px}.method{grid-template-columns:1fr}.method-image{min-height:450px}.method-copy{padding:85px 6vw}.ways-title{grid-template-columns:1fr;gap:26px;margin-bottom:50px}.ways-list a{grid-template-columns:55px 1fr auto;font-size:1.75rem}.ways-list b{font-size:17px}}
 
 /* Rectangular, direction-aware interactive tiles */
@@ -148,7 +148,7 @@ body:has(.plans-dialog[open]){overflow:hidden}
 .about-value>span{font:10px 'DM Mono';letter-spacing:.1em;color:var(--lime)}
 .about-value h3{font-size:24px;letter-spacing:-.045em;line-height:1.1;margin:90px 0 14px}
 .about-value p{font-size:12px;line-height:1.7;color:var(--muted);margin:0}
-.about-band{height:min(62vh,560px);background:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),url('assets/pillar-conditioning.jpg?v=64') center 32%/cover;filter:saturate(.8)}
+.about-band{height:min(62vh,560px);background:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),url('assets/pillar-conditioning.jpg?v=65') center 32%/cover;filter:saturate(.8)}
 .about-coaches{background:#e9e5dc;color:var(--ink)}
 .about-coaches .eyebrow{color:#54635d}
 .about-coaches h2{font-size:clamp(3.2rem,5.2vw,5.8rem);margin:0 0 60px}
@@ -377,14 +377,14 @@ footer .footer-support{background:none;border:0;color:inherit;font-family:Manrop
    else keeps the JPEG declared above. Purely additive, so nothing regresses.
    --------------------------------------------------------------------------- */
 @supports (background-image: image-set(url('assets/method.webp') type('image/webp'))){
-.pillar:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/gym-hero.webp?v=64') type('image/webp'),url('assets/gym-hero.jpg?v=64') type('image/jpeg'))}
-.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-strength.webp?v=64') type('image/webp'),url('assets/pillar-strength.jpg?v=64') type('image/jpeg'))}
-.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-conditioning.webp?v=64') type('image/webp'),url('assets/pillar-conditioning.jpg?v=64') type('image/jpeg'))}
-.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-recovery.webp?v=64') type('image/webp'),url('assets/pillar-recovery.jpg?v=64') type('image/jpeg'))}
+.pillar:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/gym-hero.webp?v=65') type('image/webp'),url('assets/gym-hero.jpg?v=65') type('image/jpeg'))}
+.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-strength.webp?v=65') type('image/webp'),url('assets/pillar-strength.jpg?v=65') type('image/jpeg'))}
+.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-conditioning.webp?v=65') type('image/webp'),url('assets/pillar-conditioning.jpg?v=65') type('image/jpeg'))}
+.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-recovery.webp?v=65') type('image/webp'),url('assets/pillar-recovery.jpg?v=65') type('image/jpeg'))}
 .method-image{background-image:linear-gradient(0deg,rgba(5,22,20,.36),transparent),image-set(url('assets/method.webp') type('image/webp'),url('assets/method.jpg') type('image/jpeg'))}
 .memory-one{background-image:linear-gradient(0deg,rgba(2,12,11,.58),transparent 70%),image-set(url('assets/memory-5k.webp') type('image/webp'),url('assets/memory-5k.jpg') type('image/jpeg'))}
 .memory-two{background-image:linear-gradient(140deg,rgba(2,12,11,.25),rgba(2,12,11,.6)),image-set(url('assets/memory-post-class.webp') type('image/webp'),url('assets/memory-post-class.jpg') type('image/jpeg'))}
-.about-band{background-image:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),image-set(url('assets/pillar-conditioning.webp?v=64') type('image/webp'),url('assets/pillar-conditioning.jpg?v=64') type('image/jpeg'))}
+.about-band{background-image:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),image-set(url('assets/pillar-conditioning.webp?v=65') type('image/webp'),url('assets/pillar-conditioning.jpg?v=65') type('image/jpeg'))}
 }
 
 /* Pending-payment banner + contact handoff links + payment reference */
@@ -3672,8 +3672,8 @@ footer a {
   flex: 0 0 42px;
   transition: transform .32s cubic-bezier(.16,1,.3,1);
 }
-.memory-explore.is-hovered b { transform: rotate(90deg) scale(1.05); }
-.memory-explore.is-open b { transform: rotate(180deg); }
+.memory-explore.is-hovered b { transform: translateX(2px) scale(1.05); }
+.memory-explore.is-open b { transform: none; }
 
 /* Lightbox dialog for memory zoom */
 .memory-lightbox {
@@ -4220,8 +4220,8 @@ footer a {
 .memory-explore .arrow-icon{width:42px!important;height:42px!important;border:2px solid currentColor!important;border-radius:50%!important;flex:0 0 42px!important}
 .memory-explore .arrow-icon:before{width:72%!important;height:72%!important;left:14%!important;top:14%!important}
 .memory-explore.is-hovered b{transform:translateX(2px) scale(1.05)!important}
-.memory-explore.is-open b{transform:rotate(180deg)!important}
-.memory-explore.is-open.is-hovered b{transform:rotate(180deg) scale(1.05)!important}
+.memory-explore.is-open b{transform:none!important}
+.memory-explore.is-open.is-hovered b{transform:translateX(2px) scale(1.05)!important}
 
 /* Coherence: unify all directional-tile pills — same fill timing, pill radius, arrow circle */
 .hero-actions .solid-button,.hero-actions .ghost-button,.price .reference-pill,.closing .round-link,
@@ -4843,4 +4843,176 @@ h2{letter-spacing:-.07em!important}
 .schedule-cta p{ color:var(--muted); }
 .faq .section-cta p{ color:var(--muted); }
 .pricing-note strong{ color:#1c2420; }
+
+/* === ARROW FIX v65: global right-pointing guarantee — all arrows point → with no rotation === */
+/* Source-level fix: reset writing-mode/direction/rotate and ensure hover only translates right */
+.arrow-icon,
+.pillar small b,
+.ways-list b,
+.memory-explore b,
+.trainer-note .arrow-icon,
+.philosophy-link .arrow-icon,
+.pt-book .arrow-icon,
+.trial-cta .arrow-icon,
+.visit-actions .arrow-icon,
+.contact-submit .arrow-icon,
+.plans-continue .arrow-icon,
+.plans-done .arrow-icon,
+.program-get-started .arrow-icon,
+.plan-join .arrow-icon,
+.plan-select .arrow-icon,
+.reach-fab .arrow-icon,
+.pg-arrow {
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  direction: ltr !important;
+  unicode-bidi: normal !important;
+  rotate: none !important;
+  transform-origin: center center !important;
+}
+/* Idle state: no transform, arrow points right via mask */
+.arrow-icon,
+.pillar small b,
+.ways-list b,
+.memory-explore .arrow-icon,
+.memory-explore b {
+  transform: none !important;
+}
+/* Pseudo-element that draws the arrow — never rotated */
+.arrow-icon:before,
+.pillar small b:before,
+.ways-list b:before,
+.memory-explore .arrow-icon:before,
+.memory-explore b:before,
+.arrow-icon:after,
+.pillar small b:after,
+.ways-list b:after {
+  writing-mode: horizontal-tb !important;
+  direction: ltr !important;
+  rotate: none !important;
+  transform: none !important;
+}
+/* Ensure the SVG mask itself is not rotated and is centered for right arrow */
+.arrow-icon:before,
+.pillar small b:before,
+.ways-list b:before {
+  mask-repeat: no-repeat !important;
+  -webkit-mask-repeat: no-repeat !important;
+  mask-position: center !important;
+  -webkit-mask-position: center !important;
+  mask-size: contain !important;
+  -webkit-mask-size: contain !important;
+  /* SVG is already right-pointing: viewBox 0 0 48 32, path M4 16h28M24 7l9 9-9 9 */
+}
+/* Hover / focus / active / is-hovered — nudge right, never rotate (preserves original intent) */
+.memory-explore.is-hovered .arrow-icon,
+.memory-explore.is-hovered b,
+.memory-explore:hover .arrow-icon,
+.memory-explore:focus-visible .arrow-icon,
+.memory-explore:active .arrow-icon {
+  transform: translateX(2px) scale(1.05) !important;
+  rotate: none !important;
+}
+.directional-tile.is-hovered .arrow-icon,
+.directional-tile:hover .arrow-icon,
+.directional-tile:focus-visible .arrow-icon,
+.solid-button.is-hovered .arrow-icon,
+.ghost-button.is-hovered .arrow-icon,
+.round-link.is-hovered .arrow-icon,
+.reference-pill.is-hovered .arrow-icon,
+.pt-book.is-hovered .arrow-icon,
+.trial-cta.is-hovered .arrow-icon,
+.visit-actions a.is-hovered .arrow-icon,
+.visit-actions a:hover .arrow-icon,
+.visit-actions button.is-hovered .arrow-icon,
+.visit-actions button:hover .arrow-icon,
+.reach-fab.is-hovered .arrow-icon,
+.reach-fab:hover .arrow-icon,
+.plans-continue.is-hovered .arrow-icon,
+.plans-done.is-hovered .arrow-icon,
+.program-get-started.is-hovered .arrow-icon,
+.plan-join.is-hovered .arrow-icon,
+.plan-select.is-hovered .arrow-icon,
+.contact-submit.is-hovered .arrow-icon,
+.pillar.is-hovered small b,
+.trust-cta.is-hovered .arrow-icon,
+.philosophy-link:hover .arrow-icon,
+.trainer-note:hover .arrow-icon {
+  transform: translateX(2px) !important;
+  rotate: none !important;
+}
+.ways-list a.is-hovered .arrow-icon,
+.ways-list a:hover .arrow-icon {
+  transform: translateX(3px) !important;
+  rotate: none !important;
+}
+/* Open state (e.g., Explore more expanded) — still points right, no 180° flip */
+.memory-explore.is-open .arrow-icon,
+.memory-explore.is-open b {
+  transform: none !important;
+  rotate: none !important;
+}
+.memory-explore.is-open.is-hovered .arrow-icon,
+.memory-explore.is-open.is-hovered b,
+.memory-explore.is-open:hover .arrow-icon,
+.memory-explore.is-open:focus-visible .arrow-icon {
+  transform: translateX(2px) scale(1.05) !important;
+  rotate: none !important;
+}
+/* Inline text arrows (philosophy, trainer note) — same rule, smaller nudge */
+.philosophy-link .arrow-icon,
+.trainer-note .arrow-icon {
+  transform: none !important;
+}
+.philosophy-link:hover .arrow-icon,
+.philosophy-link:focus-visible .arrow-icon {
+  transform: translateX(2px) !important;
+}
+/* Ensure flex alignment never switches to column for button content */
+.directional-tile,
+.solid-button,
+.ghost-button,
+.round-link,
+.reference-pill,
+.pt-book,
+.trial-cta,
+.visit-actions a,
+.visit-actions button,
+.reach-fab,
+.plans-continue,
+.plans-done,
+.program-get-started,
+.plan-join,
+.plan-select,
+.contact-submit,
+.trust-cta,
+.memory-explore {
+  flex-direction: row !important;
+  writing-mode: horizontal-tb !important;
+}
+/* Mobile / touch — same guarantee */
+@media (max-width: 720px) {
+  .arrow-icon,
+  .pillar small b,
+  .ways-list b,
+  .memory-explore b {
+    rotate: none !important;
+    transform: none !important;
+  }
+  .directional-tile.is-hovered .arrow-icon,
+  .directional-tile:active .arrow-icon {
+    transform: translateX(2px) !important;
+  }
+}
+/* Reduced motion — keep arrow orientation, just remove animation */
+@media (prefers-reduced-motion: reduce) {
+  .arrow-icon,
+  .arrow-icon:before,
+  .pillar small b,
+  .ways-list b {
+    transition: none !important;
+    transform: none !important;
+    rotate: none !important;
+  }
+}
 
