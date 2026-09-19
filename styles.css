@@ -4560,3 +4560,104 @@ h2{letter-spacing:-.07em!important}
 
 /* Ensure transform images don't flash white while loading */
 .transform-card img{background:#0a1d1c!important}
+
+/* === FIX: FAQ super-smooth fluid open — overrides UA display:none chop === */
+.faq{
+  interpolate-size: allow-keywords;
+}
+.faq details{
+  interpolate-size: allow-keywords;
+}
+/* Override UA stylesheet that hides details content with display:none */
+.faq details > .faq-answer{
+  display: grid !important;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  /* keep layout but collapsed */
+  transition:
+    grid-template-rows 620ms cubic-bezier(.16,1,.3,1),
+    opacity 440ms cubic-bezier(.16,1,.3,1),
+    visibility 620ms cubic-bezier(.16,1,.3,1);
+  will-change: grid-template-rows, opacity;
+}
+.faq details[open] > .faq-answer{
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+}
+.faq details > .faq-answer > p{
+  overflow: hidden;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 28px;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--muted);
+  max-width: 70ch;
+  transform: translateY(-8px);
+  opacity: .86;
+  filter: blur(.3px);
+  transition:
+    transform 620ms cubic-bezier(.16,1,.3,1),
+    opacity 440ms cubic-bezier(.16,1,.3,1),
+    filter 440ms ease;
+  will-change: transform, opacity;
+}
+.faq details[open] > .faq-answer > p{
+  transform: translateY(0);
+  opacity: 1;
+  filter: blur(0);
+}
+/* Summary stays smooth — icon rotates with same curve as content */
+.faq summary{
+  transition: color 220ms ease;
+}
+.faq summary span{
+  transition: transform 420ms cubic-bezier(.16,1,.3,1);
+}
+.faq summary span:before,
+.faq summary span:after{
+  transition: transform 420ms cubic-bezier(.16,1,.3,1), background 220ms ease !important;
+  height: 1.8px !important;
+}
+.faq details[open] summary{
+  color: var(--lime) !important;
+}
+/* Modern browsers: also animate the new ::details-content pseudo for even smoother */
+@supports selector(::details-content){
+  .faq details::details-content{
+    block-size: 0;
+    overflow: clip;
+    opacity: 0;
+    transition:
+      block-size 620ms cubic-bezier(.16,1,.3,1),
+      opacity 440ms ease,
+      content-visibility 620ms;
+    transition-behavior: allow-discrete;
+  }
+  .faq details[open]::details-content{
+    block-size: auto;
+    opacity: 1;
+  }
+  /* When using ::details-content, avoid double-grid animation — keep our inner grid instant */
+  .faq details::details-content .faq-answer{
+    grid-template-rows: 1fr !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+}
+@media(max-width:720px){
+  .faq details > .faq-answer > p{padding-bottom:22px}
+}
+@media(prefers-reduced-motion:reduce){
+  .faq details > .faq-answer,
+  .faq details > .faq-answer > p,
+  .faq summary span,
+  .faq summary span:before,
+  .faq summary span:after{
+    transition: none !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
