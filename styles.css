@@ -3958,3 +3958,47 @@ footer a {
 .film-video-wrap.is-playing .film-progress-bar {
   transition: width .1s linear;
 }
+
+/* === PAYMENT AUTO-CONFIRM FIX v52 === */
+.payment-ref {
+  margin-top: 14px;
+  font: 11px/1.6 'DM Mono';
+  color: var(--muted);
+  max-width: 560px;
+}
+.payment-ref strong { color: var(--paper); }
+.payment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.payment-actions .solid-button {
+  background: var(--lime);
+  color: var(--ink);
+  border: 1px solid var(--lime);
+  padding: 14px 22px;
+  font: 700 12px 'DM Mono';
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.payment-actions .ghost-button {
+  background: transparent;
+  color: var(--paper);
+  border: 1px solid var(--line);
+  padding: 14px 22px;
+  font: 500 12px 'DM Mono';
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.payment-actions .solid-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
