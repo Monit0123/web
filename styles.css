@@ -4495,3 +4495,68 @@ dialog:focus{outline:none}
 
 .method-copy .solid-button:focus-visible{color:var(--ink)!important;border-color:var(--lime)!important}
 .method-copy .solid-button:focus-visible:after{transform:translateX(0)!important}
+
+/* === POLISH v57b: final pixel excellence — borders, optics, contrast === */
+
+/* Light sections borders — unify to ink 14% (was #89938b #9da69e mix) */
+.price-card{border-top:1px solid rgba(7,22,22,.14)!important;border-bottom:1px solid rgba(7,22,22,.14)!important}
+.pricing-note{border-top:0!important}
+.facility-card{border-color:rgba(7,22,22,.12)!important}
+.ways-list{border-top-color:rgba(7,22,22,.14)!important}
+.ways-list a{border-bottom-color:rgba(7,22,22,.12)!important}
+.pf-macro{border-top-color:rgba(7,22,22,.14)!important}
+.pf-macro div{border-right-color:rgba(7,22,22,.12)!important}
+.pf-meal{border-top-color:rgba(7,22,22,.12)!important}
+.legal-block{border-top-color:rgba(7,22,22,.12)!important}
+.legal-terms{border-top-color:rgba(7,22,22,.14)!important}
+
+/* Dark sections borders — unify to 14% white */
+.schedule-grid,.schedule-row,.schedule-cta,.visit-grid,.visit-grid div,.plans-footer,.muscle-list,.muscle-option,.plan-day,.contact-form,.field input,.phone-prefix{border-color:rgba(232,229,220,.14)!important}
+.proof-grid{border-top-color:rgba(232,229,220,.14)!important}
+.proof-grid div{border-right-color:rgba(232,229,220,.12)!important}
+
+/* Typography optical: headings tighter on large */
+h1{letter-spacing:-.075em!important;line-height:.88!important}
+h2{letter-spacing:-.07em!important}
+.manifesto h2{letter-spacing:-.08em!important}
+.ways-title h2,.memories h2,.trainer-heading h2{letter-spacing:-.07em!important}
+
+/* Eyebrow consistency: 10px 0.14em 0.85 opacity */
+.eyebrow{letter-spacing:.14em!important;opacity:.9}
+
+/* Facility list check — ensure lime dot is crisp */
+.facility-list li:before{color:var(--lime)!important;font-weight:700}
+
+/* Transform note — slightly darker for contrast on paper */
+.transform-note{color:#3d4a44!important;font-size:12px!important}
+
+/* PT card list — ensure muted but readable */
+.pt-card ul{color:#a8b1aa!important}
+.pt-card.is-selected ul{color:#3c4a15!important}
+
+/* Quote attribution — ensure mono crisp */
+.quote-attribution{letter-spacing:.12em!important;color:rgba(7,22,22,.72)!important}
+
+/* FAQ summary — ensure hover and open both lime, with smooth icon */
+.faq summary span:before,.faq summary span:after{height:1.8px!important}
+.faq details[open] summary span:before{transform:rotate(0)!important}
+
+/* Visit — email/phone link hover underline subtle */
+.visit-grid p a{border-bottom-width:1.5px!important}
+
+/* Ensure hero-actions pills have equal visual weight */
+.hero-actions .solid-button{box-shadow:0 12px 40px rgba(0,0,0,.25)!important}
+.hero-actions .ghost-button{backdrop-filter:blur(4px)}
+
+/* Ensure mobile menu links have larger hit area */
+.mobile-menu nav a{padding:22px 0!important}
+
+/* Ensure dialogs have max-width and centered perfectly */
+.plans-dialog,.program-dialog,.contact-dialog,.photo-dialog{margin:auto!important;inset:0!important}
+
+/* Last pixel: remove any stray underline under philosophy link on focus */
+.philosophy-link:focus-visible{outline:none!important}
+.philosophy-link:focus-visible:after{transform:translateX(0)!important}
+
+/* Ensure transform images don't flash white while loading */
+.transform-card img{background:#0a1d1c!important}
