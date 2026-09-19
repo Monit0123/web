@@ -6,7 +6,7 @@
 @media(max-width:720px){.trainer-card{height:410px;min-width:78vw}.community-copy h2{font-size:clamp(3.4rem,14vw,4.7rem)}}
 
 /* ONYX athletic club */
-.onyx-brand .site-header nav{margin-left:6vw}.onyx-brand .hero-copy{top:23%}.onyx-brand .hero-shade{background:linear-gradient(90deg,rgba(2,12,14,.91) 0%,rgba(2,12,14,.67) 38%,rgba(2,12,14,.05) 73%),linear-gradient(0deg,rgba(2,12,14,.6),transparent 42%)}.hero-actions{display:flex;align-items:center;gap:25px}.solid-button{background:var(--lime);color:var(--ink);padding:19px 22px;text-transform:uppercase;font-size:10px;letter-spacing:.12em;text-decoration:none;font-weight:700}.solid-button b,.ghost-button b{margin-left:20px;font-size:16px}.ghost-button{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-decoration:none}.manifesto{padding:132px 8vw 145px;background:#e9e5dc;color:var(--ink);display:grid;grid-template-columns:1fr 1.6fr;position:relative}.manifesto>p{grid-column:1/-1;font:10px 'DM Mono';letter-spacing:.13em;margin:0 0 100px;color:#536059}.manifesto h2{font-size:clamp(4rem,7vw,7.8rem);margin:0}.manifesto-copy{align-self:end;max-width:350px}.manifesto-copy p{line-height:1.7;font-size:15px;margin-bottom:34px}.pillars{display:grid;grid-template-columns:repeat(3,1fr);min-height:700px}.pillar{position:relative;padding:35px 34px;display:flex;flex-direction:column;color:#fff;overflow:hidden;background:#213431}.pillar:before{content:'';position:absolute;inset:0;opacity:.32;transition:.5s transform,.5s opacity;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/gym-hero.jpg?v=61') center/cover}.pillar:hover:before{transform:scale(1.08);opacity:.55}.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-strength.jpg?v=61')}.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-conditioning.jpg?v=61')}.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-recovery.jpg?v=61')}.pillar>*{position:relative;z-index:1}.pillar>span{font:10px 'DM Mono';letter-spacing:.1em}.pillar h2{font-size:clamp(3rem,4.3vw,5rem);margin:auto 0 16px}.pillar p{font-size:13px;line-height:1.6;max-width:280px;margin:0 0 25px;color:#e5e9e4}.pillar a{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.6);padding-bottom:8px;width:max-content}.pillar a b{font-size:15px;margin-left:20px}.proof{background:#102d2b}.proof .eyebrow{color:var(--lime)}.proof-grid{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:60px}.proof-grid div{padding:27px 25px 25px 0;border-right:1px solid var(--line)}.proof-grid div+div{padding-left:25px}.proof-grid div:last-child{border:0}.proof-grid strong{font-size:clamp(3.2rem,5.4vw,6rem);letter-spacing:-.09em;line-height:1}.proof-grid strong span{color:var(--lime)}.proof-grid p{font:10px/1.5 'DM Mono';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:20px 0 0}.method{display:grid;grid-template-columns:1.1fr .9fr;background:#cbd4cd;color:var(--ink)}.method-image{min-height:730px;background:linear-gradient(0deg,rgba(5,22,20,.36),transparent),url('assets/method.jpg') center 30%/cover;filter:saturate(.7)}.method-copy{padding:8vw;display:flex;flex-direction:column;justify-content:center}.method-copy h2{font-size:clamp(3.5rem,5.4vw,6rem);margin-bottom:31px}.method-copy>p:not(.eyebrow){font-size:14px;line-height:1.7;max-width:330px;margin-bottom:35px}.ways{background:#e9e5dc;color:var(--ink)}.ways-title{display:grid;grid-template-columns:1.5fr .5fr;align-items:end;margin-bottom:80px}.ways-title h2{font-size:clamp(3.8rem,6.4vw,6.8rem);margin:0}.ways-title p{font-size:14px;line-height:1.7;margin:0;max-width:270px}.ways-list{border-top:1px solid #9da69e}.ways-list a{display:grid;grid-template-columns:80px 1fr auto;align-items:center;border-bottom:1px solid #9da69e;padding:20px 0;color:var(--ink);text-decoration:none;font-size:clamp(1.7rem,3.5vw,3.5rem);letter-spacing:-.055em;transition:.2s padding,.2s color}.ways-list a:hover{padding-left:16px;color:#38612b}.ways-list span{font:10px 'DM Mono';letter-spacing:.1em}.ways-list b{font-size:22px;font-weight:400}.onyx-brand .closing h2 em{display:inline}.onyx-brand .membership{background:#e9e5dc}.onyx-brand .membership .eyebrow{color:#54635d}
+.onyx-brand .site-header nav{margin-left:6vw}.onyx-brand .hero-copy{top:23%}.onyx-brand .hero-shade{background:linear-gradient(90deg,rgba(2,12,14,.91) 0%,rgba(2,12,14,.67) 38%,rgba(2,12,14,.05) 73%),linear-gradient(0deg,rgba(2,12,14,.6),transparent 42%)}.hero-actions{display:flex;align-items:center;gap:25px}.solid-button{background:var(--lime);color:var(--ink);padding:19px 22px;text-transform:uppercase;font-size:10px;letter-spacing:.12em;text-decoration:none;font-weight:700}.solid-button b,.ghost-button b{margin-left:20px;font-size:16px}.ghost-button{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-decoration:none}.manifesto{padding:132px 8vw 145px;background:#e9e5dc;color:var(--ink);display:grid;grid-template-columns:1fr 1.6fr;position:relative}.manifesto>p{grid-column:1/-1;font:10px 'DM Mono';letter-spacing:.13em;margin:0 0 100px;color:#536059}.manifesto h2{font-size:clamp(4rem,7vw,7.8rem);margin:0}.manifesto-copy{align-self:end;max-width:350px}.manifesto-copy p{line-height:1.7;font-size:15px;margin-bottom:34px}.pillars{display:grid;grid-template-columns:repeat(3,1fr);min-height:700px}.pillar{position:relative;padding:35px 34px;display:flex;flex-direction:column;color:#fff;overflow:hidden;background:#213431}.pillar:before{content:'';position:absolute;inset:0;opacity:.32;transition:.5s transform,.5s opacity;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/gym-hero.jpg?v=62') center/cover}.pillar:hover:before{transform:scale(1.08);opacity:.55}.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-strength.jpg?v=62')}.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-conditioning.jpg?v=62')}.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),url('assets/pillar-recovery.jpg?v=62')}.pillar>*{position:relative;z-index:1}.pillar>span{font:10px 'DM Mono';letter-spacing:.1em}.pillar h2{font-size:clamp(3rem,4.3vw,5rem);margin:auto 0 16px}.pillar p{font-size:13px;line-height:1.6;max-width:280px;margin:0 0 25px;color:#e5e9e4}.pillar a{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.6);padding-bottom:8px;width:max-content}.pillar a b{font-size:15px;margin-left:20px}.proof{background:#102d2b}.proof .eyebrow{color:var(--lime)}.proof-grid{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:60px}.proof-grid div{padding:27px 25px 25px 0;border-right:1px solid var(--line)}.proof-grid div+div{padding-left:25px}.proof-grid div:last-child{border:0}.proof-grid strong{font-size:clamp(3.2rem,5.4vw,6rem);letter-spacing:-.09em;line-height:1}.proof-grid strong span{color:var(--lime)}.proof-grid p{font:10px/1.5 'DM Mono';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:20px 0 0}.method{display:grid;grid-template-columns:1.1fr .9fr;background:#cbd4cd;color:var(--ink)}.method-image{min-height:730px;background:linear-gradient(0deg,rgba(5,22,20,.36),transparent),url('assets/method.jpg') center 30%/cover;filter:saturate(.7)}.method-copy{padding:8vw;display:flex;flex-direction:column;justify-content:center}.method-copy h2{font-size:clamp(3.5rem,5.4vw,6rem);margin-bottom:31px}.method-copy>p:not(.eyebrow){font-size:14px;line-height:1.7;max-width:330px;margin-bottom:35px}.ways{background:#e9e5dc;color:var(--ink)}.ways-title{display:grid;grid-template-columns:1.5fr .5fr;align-items:end;margin-bottom:80px}.ways-title h2{font-size:clamp(3.8rem,6.4vw,6.8rem);margin:0}.ways-title p{font-size:14px;line-height:1.7;margin:0;max-width:270px}.ways-list{border-top:1px solid #9da69e}.ways-list a{display:grid;grid-template-columns:80px 1fr auto;align-items:center;border-bottom:1px solid #9da69e;padding:20px 0;color:var(--ink);text-decoration:none;font-size:clamp(1.7rem,3.5vw,3.5rem);letter-spacing:-.055em;transition:.2s padding,.2s color}.ways-list a:hover{padding-left:16px;color:#38612b}.ways-list span{font:10px 'DM Mono';letter-spacing:.1em}.ways-list b{font-size:22px;font-weight:400}.onyx-brand .closing h2 em{display:inline}.onyx-brand .membership{background:#e9e5dc}.onyx-brand .membership .eyebrow{color:#54635d}
 @media(max-width:720px){.onyx-brand .site-header nav{display:none}.hero-actions{gap:18px;flex-wrap:wrap}.manifesto{display:block;padding:85px 6vw}.manifesto>p{margin-bottom:50px;line-height:1.6}.manifesto-copy{margin-top:35px}.pillars{grid-template-columns:1fr}.pillar{min-height:440px}.proof-grid{grid-template-columns:repeat(2,1fr);gap:0}.proof-grid div:nth-child(2){border-right:0}.proof-grid div:nth-child(n+3){border-top:1px solid var(--line);padding-top:27px}.method{grid-template-columns:1fr}.method-image{min-height:450px}.method-copy{padding:85px 6vw}.ways-title{grid-template-columns:1fr;gap:26px;margin-bottom:50px}.ways-list a{grid-template-columns:55px 1fr auto;font-size:1.75rem}.ways-list b{font-size:17px}}
 
 /* Rectangular, direction-aware interactive tiles */
@@ -148,7 +148,7 @@ body:has(.plans-dialog[open]){overflow:hidden}
 .about-value>span{font:10px 'DM Mono';letter-spacing:.1em;color:var(--lime)}
 .about-value h3{font-size:24px;letter-spacing:-.045em;line-height:1.1;margin:90px 0 14px}
 .about-value p{font-size:12px;line-height:1.7;color:var(--muted);margin:0}
-.about-band{height:min(62vh,560px);background:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),url('assets/pillar-conditioning.jpg?v=61') center 32%/cover;filter:saturate(.8)}
+.about-band{height:min(62vh,560px);background:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),url('assets/pillar-conditioning.jpg?v=62') center 32%/cover;filter:saturate(.8)}
 .about-coaches{background:#e9e5dc;color:var(--ink)}
 .about-coaches .eyebrow{color:#54635d}
 .about-coaches h2{font-size:clamp(3.2rem,5.2vw,5.8rem);margin:0 0 60px}
@@ -377,14 +377,14 @@ footer .footer-support{background:none;border:0;color:inherit;font-family:Manrop
    else keeps the JPEG declared above. Purely additive, so nothing regresses.
    --------------------------------------------------------------------------- */
 @supports (background-image: image-set(url('assets/method.webp') type('image/webp'))){
-.pillar:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/gym-hero.webp?v=61') type('image/webp'),url('assets/gym-hero.jpg?v=61') type('image/jpeg'))}
-.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-strength.webp?v=61') type('image/webp'),url('assets/pillar-strength.jpg?v=61') type('image/jpeg'))}
-.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-conditioning.webp?v=61') type('image/webp'),url('assets/pillar-conditioning.jpg?v=61') type('image/jpeg'))}
-.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-recovery.webp?v=61') type('image/webp'),url('assets/pillar-recovery.jpg?v=61') type('image/jpeg'))}
+.pillar:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/gym-hero.webp?v=62') type('image/webp'),url('assets/gym-hero.jpg?v=62') type('image/jpeg'))}
+.pillar-strength:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-strength.webp?v=62') type('image/webp'),url('assets/pillar-strength.jpg?v=62') type('image/jpeg'))}
+.pillar-conditioning:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-conditioning.webp?v=62') type('image/webp'),url('assets/pillar-conditioning.jpg?v=62') type('image/jpeg'))}
+.pillar-recovery:before{background-image:linear-gradient(0deg,rgba(0,0,0,.75),transparent 70%),image-set(url('assets/pillar-recovery.webp?v=62') type('image/webp'),url('assets/pillar-recovery.jpg?v=62') type('image/jpeg'))}
 .method-image{background-image:linear-gradient(0deg,rgba(5,22,20,.36),transparent),image-set(url('assets/method.webp') type('image/webp'),url('assets/method.jpg') type('image/jpeg'))}
 .memory-one{background-image:linear-gradient(0deg,rgba(2,12,11,.58),transparent 70%),image-set(url('assets/memory-5k.webp') type('image/webp'),url('assets/memory-5k.jpg') type('image/jpeg'))}
 .memory-two{background-image:linear-gradient(140deg,rgba(2,12,11,.25),rgba(2,12,11,.6)),image-set(url('assets/memory-post-class.webp') type('image/webp'),url('assets/memory-post-class.jpg') type('image/jpeg'))}
-.about-band{background-image:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),image-set(url('assets/pillar-conditioning.webp?v=61') type('image/webp'),url('assets/pillar-conditioning.jpg?v=61') type('image/jpeg'))}
+.about-band{background-image:linear-gradient(0deg,rgba(3,14,13,.45),rgba(3,14,13,.05)),image-set(url('assets/pillar-conditioning.webp?v=62') type('image/webp'),url('assets/pillar-conditioning.jpg?v=62') type('image/jpeg'))}
 }
 
 /* Pending-payment banner + contact handoff links + payment reference */
@@ -4661,3 +4661,186 @@ h2{letter-spacing:-.07em!important}
     filter: none !important;
   }
 }
+
+/* === CONTEXTUAL BUTTONS v62 — idle + motion matches section, not copy-pasta === */
+
+/* 1) HERO — dark image: primary PAPER, secondary GHOST WHITE */
+.hero-actions .solid-button{
+  --tile-fill: var(--lime);
+  background:#f3f1ea !important; color:var(--ink) !important; border-color:#f3f1ea !important;
+}
+.hero-actions .ghost-button{
+  --tile-fill: var(--lime);
+  background:transparent !important; color:#f3f1ea !important; border-color:rgba(243,241,234,.75) !important;
+}
+.hero-actions .solid-button.is-hovered,
+.hero-actions .ghost-button.is-hovered{
+  color:var(--ink) !important; border-color:var(--lime) !important;
+}
+.hero-actions .solid-button .arrow-icon,
+.hero-actions .ghost-button .arrow-icon{border-width:2px !important}
+
+/* 2) HERO-TRUST — sage #cbd4cd: subtle TEXT → DARK PILL */
+.hero-trust .trust-cta{
+  --tile-fill:#071616;
+  background:transparent !important; color:#071616 !important; border-color:rgba(7,22,22,.18) !important;
+  box-shadow:none !important;
+}
+.hero-trust .trust-cta.is-hovered{
+  background:transparent !important; color:#fff !important; border-color:var(--tile-fill) !important;
+}
+
+/* 3) PILLARS — image tiles: keep lime but tint per content + distinct easing */
+.pillar-strength{ --tile-fill: var(--lime); }
+.pillar-conditioning{ --tile-fill: #8fd6ff; } /* conditioning = engine blue, matches schedule */
+.pillar-recovery{ --tile-fill: #ffc9a3; }     /* recovery = warm peach, calm */
+.pillar-strength:after, .pillar-conditioning:after, .pillar-recovery:after{
+  transition-duration:.42s; transition-timing-function:cubic-bezier(.77,0,.18,1);
+}
+.pillar-conditioning:after{ transition-duration:.48s; } /* a touch more fluid for engine */
+.pillar-recovery:after{ transition-duration:.58s; transition-timing-function:cubic-bezier(.16,1,.3,1); } /* softer, slower */
+.pillar.is-hovered{ color:var(--ink) !important; }
+.pillar-conditioning.is-hovered{ color:#0a1e2e !important; }
+.pillar-recovery.is-hovered{ color:#2b1d12 !important; }
+.pillar small{ transition:color .22s ease; }
+.pillar-conditioning small{ border-bottom-color:rgba(10,30,46,.35); }
+.pillar-recovery small{ border-bottom-color:rgba(43,29,18,.35); }
+
+/* 4) SCHEDULE — dark #0b2422: LIME SOLID → PAPER on hover (diff from hero) */
+.schedule .schedule-cta .solid-button{
+  --tile-fill:#f3f1ea;
+  background:var(--lime) !important; color:var(--ink) !important; border-color:var(--lime) !important;
+}
+.schedule .schedule-cta .solid-button.is-hovered{
+  color:var(--ink) !important; border-color:var(--tile-fill) !important;
+}
+
+/* 5) METHOD — sage light: INK SOLID → LIME (already) — keep but make easing crisp */
+.method-copy .solid-button{
+  --tile-fill: var(--lime);
+  transition-timing-function:cubic-bezier(.16,1,.3,1);
+}
+.method-copy .solid-button:after{ transition-duration:.38s; }
+
+/* 6) WAYS — paper #e9e5dc rows: underline + arrow nudge, NOT pill fill */
+.ways-list a{
+  --tile-fill: transparent; /* disable pill fill for rows */
+}
+.ways-list a:after{ display:none !important; }
+.ways-list a{ transition:padding .28s cubic-bezier(.16,1,.3,1), color .22s ease, border-color .22s; }
+.ways-list a.is-hovered{ background:rgba(7,22,22,.04); }
+
+/* 7) PT — dark #071616 commerce: LIME SOLID → INK outline (price action) */
+.pt .pt-book{
+  --tile-fill:#0b2020;
+  background:var(--lime) !important; color:var(--ink) !important; border-color:var(--lime) !important;
+  box-shadow:0 10px 28px rgba(215,255,50,.12);
+}
+.pt .pt-book.is-hovered{
+  background:var(--lime) !important; /* keep lime bg, text flips via overlay */
+  color:var(--paper) !important; border-color:var(--tile-fill) !important;
+}
+.pt .pt-card.is-featured .pt-book{
+  border-color:var(--lime) !important;
+  box-shadow:0 0 0 1px rgba(215,255,50,.35), 0 14px 36px rgba(215,255,50,.14);
+}
+
+/* 8) FAQ — dark FAQ: GHOST LIME outline → LIME fill */
+.faq .section-cta .solid-button{
+  --tile-fill: var(--lime);
+  background:transparent !important; color:#f3f1ea !important; border-color:rgba(215,255,50,.7) !important;
+}
+.faq .section-cta .solid-button.is-hovered{
+  color:var(--ink) !important; border-color:var(--tile-fill) !important;
+}
+
+/* 9) MEMBERSHIP — price card #e9e5dc light: INK SOLID (Explore plans) */
+.price .reference-pill{
+  --tile-fill: var(--lime);
+  background:var(--ink) !important; color:#fff !important; border-color:var(--ink) !important;
+}
+.price .reference-pill.is-hovered{ color:var(--ink) !important; }
+
+/* 10) TRIAL — lime bg var(--lime): INK SOLID → PAPER (not lime-on-lime) */
+.trial .trial-cta{
+  --tile-fill:#f3f1ea;
+  background:var(--ink) !important; color:#fff !important; border-color:var(--ink) !important;
+}
+.trial .trial-cta.is-hovered{
+  color:var(--ink) !important; border-color:var(--tile-fill) !important;
+}
+
+/* 11) VISIT — dark #0d2e2d: GHOST PAPER + LIME SOLID distinct */
+.visit .visit-actions a{
+  --tile-fill: var(--lime);
+  background:transparent !important; color:var(--paper) !important; border-color:rgba(232,229,220,.35) !important;
+}
+.visit .visit-actions button{
+  --tile-fill:#0b2020;
+  background:var(--lime) !important; color:var(--ink) !important; border-color:var(--lime) !important;
+}
+.visit .visit-actions a.is-hovered{ color:var(--ink) !important; }
+.visit .visit-actions button.is-hovered{ color:var(--paper) !important; }
+
+/* 12) CLOSING — gradient dark: PAPER GHOST → LIME */
+.closing .round-link{
+  --tile-fill: var(--lime);
+  background:transparent !important; color:#f3f1ea !important; border-color:rgba(243,241,234,.75) !important;
+}
+.closing .round-link.is-hovered{ color:var(--ink) !important; }
+
+/* 13) MEMORY — dark #0e2e2b: keep lime but softer, slower than pillars */
+.memory-explore{
+  --tile-fill: var(--lime);
+}
+.memory-explore:after{ transition-duration:.52s; }
+
+/* 14) REACH FAB — lime → INK (fast, snappy for utility) */
+.reach-fab{
+  --tile-fill:#0b2020;
+}
+.reach-fab:after{ transition-duration:.36s; }
+
+/* 15) DIALOGS — keep coherent but slightly muted vs marketing CTAs */
+.plans-dialog .plan-select{
+  --tile-fill: var(--lime);
+  border-color:rgba(232,229,220,.35) !important;
+}
+.plans-dialog .plan-card.is-selected .plan-select{
+  --tile-fill:#0b2020;
+}
+.plans-dialog .plans-continue{
+  --tile-fill:#0b2020;
+}
+.plans-dialog .plans-done{
+  --tile-fill: var(--lime);
+}
+.program-dialog .program-get-started{
+  --tile-fill:#0b2020;
+}
+.program-dialog .plan-join{
+  --tile-fill: var(--lime);
+}
+
+/* Ensure all pills keep 999px but contextual fills now differ */
+.hero-actions .solid-button:after,
+.hero-actions .ghost-button:after,
+.schedule-cta .solid-button:after,
+.faq .solid-button:after,
+.price .reference-pill:after,
+.closing .round-link:after,
+.trial-cta:after,
+.visit-actions a:after,
+.visit-actions button:after,
+.memory-explore:after,
+.reach-fab:after{
+  /* each already has correct --tile-fill per context above */
+}
+
+/* Idle state polish: ensure surrounding text/borders match section palette */
+.hero-trust strong{ color:#071616; }
+.method-copy .section-cta p{ color:rgba(7,22,22,.55); }
+.schedule-cta p{ color:var(--muted); }
+.faq .section-cta p{ color:var(--muted); }
+.pricing-note strong{ color:#1c2420; }
+
