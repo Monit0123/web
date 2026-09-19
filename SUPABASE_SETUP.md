@@ -34,3 +34,49 @@ The storage policies and signed-upload flow should be added only after the accou
 - Audit events
 
 The publishable Supabase key belongs in browser code. Never put the Supabase service-role key in this repository or frontend.
+
+## Payment auto-confirmation (verify-payment edge function)
+
+The site no longer activates memberships from the browser. The moment Razorpay
+redirects back with `status=paid`, the page calls the `verify-payment` function,
+which checks the payment **against Razorpay's own API** and activates only on a
+real, captured, correctly-priced payment. One payment can activate one
+membership, ever (replay ledger below).
+
+Deploy once (~3 min, all in the Supabase dashboard — no terminal):
+
+1. **SQL Editor** → new query → run just the `payment_verifications` block at
+   the bottom of `supabase-schema.sql` (or re-run the whole file; it's
+   idempotent).
+
+   If it errors with `syntax error at or near "security"`: clear the query
+   box completely (select all → delete) and re-run — a hidden character from
+   copy-paste is almost always the cause. Worst case: type the
+   `alter table ... enable row security;` line by hand.
+2. **Edge Functions** → **New function**:
+   - Name: `verify-payment`
+   - Body: paste the contents of `supabase/functions/verify-payment/index.ts`
+3. **Secrets** for `verify-payment` (Razorpay dashboard → Settings → API Keys):
+   - `RAZORPAY_KEY_ID` → your key ID (`rzp_live_…` or `rzp_test_…`)
+   - `RAZORPAY_KEY_SECRET` → your **secret** key (never goes into this repo)
+4. **Deploy.** Leave **Verify JWT** ON (the site already sends the anon key).
+
+That's it — the site is already pointed at
+`https://xetcagevubbvxjxinvcf.supabase.co/functions/v1/verify-payment`.
+
+### How it behaves after deploy
+
+- Customer pays → Razorpay returns → page calls the function →
+  membership activates automatically, success screen shows. **No fuss.**
+- Returned `status=abandoned` or a failed verification → the payment stays
+  **pending** with a clear "front desk will confirm" screen + WhatsApp nudge.
+  Nothing self-activates.
+- Until the function is deployed, behaviour is the safe pending state described
+  above (verification endpoint 404s → stays pending). No data can be
+  corrupted; it just waits for the one-time deploy.
+
+### If you change plan prices
+
+Update BOTH the Razorpay payment links **and** the `PRICES_PAISE` map at the
+top of `supabase/functions/verify-payment/index.ts`, then redeploy the
+function. A payment that doesn't match the map's price is rejected.
