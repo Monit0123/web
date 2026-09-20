@@ -601,6 +601,15 @@ const currentUser = () => {
 };
 const saveCurrentUser = record => {
   const users = readUsers();
+  const prev = users[record.email] || {};
+  // Never let a stale in-memory snapshot overwrite a newer session
+  // (e.g. one minted by a background refresh in another call or tab).
+  if (prev.supabaseToken && jwtExpSeconds(prev.supabaseToken) > jwtExpSeconds(record.supabaseToken)) {
+    record.supabaseToken = prev.supabaseToken;
+    if (prev.supabaseRefreshToken) record.supabaseRefreshToken = prev.supabaseRefreshToken;
+  } else if (prev.supabaseRefreshToken && !record.supabaseRefreshToken) {
+    record.supabaseRefreshToken = prev.supabaseRefreshToken;
+  }
   users[record.email] = record;
   writeUsers(users);
   syncRecordToSupabase(record);
@@ -612,9 +621,70 @@ const supabaseHeaders = token => ({
   Authorization: `Bearer ${token || ONYX.SUPABASE_KEY}`
 });
 
+/* Supabase access tokens expire after ~1 hour. Login/signup stores the
+   refresh_token alongside the access_token; before any shared-sync call we
+   check the JWT's exp claim and silently renew the session when it is stale.
+   Without this, an expired token makes the edge-function gateway reject the
+   request (surfacing in the browser as an opaque "Failed to fetch") and the
+   admin dashboard silently degrades to browser-local demo data. */
+const jwtExpSeconds = token => {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) return 0;
+    const exp = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))).exp;
+    return Number(exp) || 0;
+  } catch { return 0; }
+};
+const supabaseTokenIsFresh = token => !!token && (jwtExpSeconds(token) - Date.now() / 1000) > 60;
+let supabaseRefreshInFlight = null;
+// Refreshes the session. Resolves to the NEW access token on success, to the
+// untouched current token when no refresh was attempted (nothing to refresh
+// with), or to null when a refresh was attempted and failed.
+const refreshSupabaseSession = user => {
+  const fallback = (user && user.supabaseToken) || '';
+  if (!user || !user.email || !user.supabaseRefreshToken || !(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY)) {
+    return Promise.resolve(fallback);
+  }
+  if (supabaseRefreshInFlight) return supabaseRefreshInFlight;
+  const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
+  const refreshToken = user.supabaseRefreshToken;
+  supabaseRefreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${base}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: supabaseHeaders(),
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.access_token) return null;
+      const users = readUsers();
+      const record = users[user.email];
+      if (record) {
+        record.supabaseToken = payload.access_token;
+        if (payload.refresh_token) record.supabaseRefreshToken = payload.refresh_token;
+        writeUsers(users);
+      }
+      return payload.access_token;
+    } catch { return null; }
+    finally { supabaseRefreshInFlight = null; }
+  })();
+  return supabaseRefreshInFlight;
+};
+// Returns a usable access token for the user, refreshing it first if stale.
+const ensureSupabaseToken = async user => {
+  const target = user || currentUser();
+  if (!target) return '';
+  if (supabaseTokenIsFresh(target.supabaseToken)) return target.supabaseToken;
+  if (target.supabaseRefreshToken) {
+    const renewed = await refreshSupabaseSession(target);
+    if (renewed) return renewed;
+  }
+  return target.supabaseToken || '';
+};
+
 const stripSupabaseAppData = record => {
   const copy = JSON.parse(JSON.stringify(record || {}));
-  ['pass', 'salt', 'algo', 'supabaseToken', 'supabaseRole', 'supabaseId', '_adminSource', '_sharedSyncedAt', 'pendingPayment'].forEach(key => { delete copy[key]; });
+  ['pass', 'salt', 'algo', 'supabaseToken', 'supabaseRefreshToken', 'supabaseRole', 'supabaseId', '_adminSource', '_sharedSyncedAt', 'pendingPayment'].forEach(key => { delete copy[key]; });
   ['name', 'email', 'phone', 'role', 'plan', 'expiresAt', 'activatedAt', 'assignedCoach', 'suspended'].forEach(key => { delete copy[key]; });
   return copy;
 };
@@ -646,6 +716,8 @@ const syncRecordToSupabase = async record => {
   const actorRole = String(actor.supabaseRole || actor.role || '').toLowerCase();
   const canWrite = actor.supabaseId === record.supabaseId || ['admin', 'manager', 'trainer'].includes(actorRole);
   if (!canWrite) return;
+  const token = await ensureSupabaseToken(actor);
+  if (!token) return;
   const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
   const payload = {
     full_name: record.name || '',
@@ -661,7 +733,7 @@ const syncRecordToSupabase = async record => {
   try {
     await fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(record.supabaseId)}`, {
       method: 'PATCH',
-      headers: { ...supabaseHeaders(actor.supabaseToken), Prefer: 'return=minimal' },
+      headers: { ...supabaseHeaders(token), Prefer: 'return=minimal' },
       body: JSON.stringify(payload)
     });
   } catch (error) { console.warn('Supabase profile sync failed.', error); }
@@ -669,14 +741,16 @@ const syncRecordToSupabase = async record => {
 const syncCurrentUserFromSupabase = async () => {
   const user = currentUser();
   if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseId && user.supabaseToken)) return null;
+  const token = await ensureSupabaseToken(user);
+  if (!token) return null;
   const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
   try {
     const [profileRes, membershipRes] = await Promise.all([
       fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}&select=id,full_name,phone,role,assigned_coach_email,suspended,app_data,active_plan,membership_expires_at,last_payment_ref,last_payment_id`, {
-        headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+        headers: { ...supabaseHeaders(token), Accept: 'application/json' }
       }),
       fetch(`${base}/rest/v1/memberships?member_id=eq.${encodeURIComponent(user.supabaseId)}&select=plan,status,starts_at,ends_at,payment_reference,created_at&order=created_at.desc&limit=1`, {
-        headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+        headers: { ...supabaseHeaders(token), Accept: 'application/json' }
       })
     ]);
     if (!profileRes.ok) return null;
@@ -686,6 +760,12 @@ const syncCurrentUserFromSupabase = async () => {
     if (!profile) return null;
     const merged = mergeSupabaseMember(user, profile, memberships[0] || null);
     const users = readUsers();
+    const stored = users[merged.email] || {};
+    // The stored record is the session source of truth — it may hold tokens
+    // minted by a refresh that ran while this fetch was in flight. Never let
+    // the pre-fetch snapshot overwrite them.
+    merged.supabaseToken = stored.supabaseToken || token;
+    merged.supabaseRefreshToken = stored.supabaseRefreshToken || merged.supabaseRefreshToken || user.supabaseRefreshToken || null;
     users[merged.email] = merged;
     writeUsers(users);
     return merged;
@@ -763,6 +843,7 @@ const supabaseAuth = async (mode, email, password, name) => {
     name: profile.full_name || name || (user.email || email).split('@')[0],
     id: (user.id || payload.user && payload.user.id || null),
     token,
+    refreshToken: payload.refresh_token || null,
     role: profile.role || 'member',
     needsConfirmation: false,
     created: mode === 'signup'
@@ -888,10 +969,10 @@ const activateMembership = (user, payment, source = 'local') => {
   // Optional Supabase sync if configured
   if (ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user.supabaseId && user.supabaseToken) {
     const base = ONYX.SUPABASE_URL.replace(/\/$/, '');
-    fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}`, {
+    ensureSupabaseToken(user).then(token => fetch(`${base}/rest/v1/profiles?id=eq.${encodeURIComponent(user.supabaseId)}`, {
       method: 'PATCH',
       headers: {
-        ...supabaseHeaders(user.supabaseToken),
+        ...supabaseHeaders(token || user.supabaseToken),
         'Content-Type': 'application/json',
         Prefer: 'return=minimal'
       },
@@ -901,7 +982,7 @@ const activateMembership = (user, payment, source = 'local') => {
         last_payment_ref: payment.ref,
         last_payment_id: payment.paymentId || null
       })
-    }).catch(() => {});
+    })).catch(() => {});
   }
   pushNotif(user, '✅', `Payment confirmed — ${payment.plan} active till ${fmtDate(user.expiresAt)}!`);
   return true;
@@ -1246,7 +1327,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
         }, 400);
         return;
       }
-      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRole: remote.role, role: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+      const record = { name: remote.name, email: remote.email, supabaseId: remote.id, supabaseToken: remote.token, supabaseRefreshToken: remote.refreshToken || null, supabaseRole: remote.role, role: remote.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
       saveCurrentUser(record);
       localStorage.setItem(SESSION_KEY, email);
       form.reset(); authDialog.close();
@@ -1258,7 +1339,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
         try {
           const remoteLogin = await supabaseAuth('login', email, password, name);
           if (remoteLogin && remoteLogin.token) {
-            const record = { name: remoteLogin.name, email: remoteLogin.email, supabaseId: remoteLogin.id, supabaseToken: remoteLogin.token, supabaseRole: remoteLogin.role, role: remoteLogin.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
+            const record = { name: remoteLogin.name, email: remoteLogin.email, supabaseId: remoteLogin.id, supabaseToken: remoteLogin.token, supabaseRefreshToken: remoteLogin.refreshToken || null, supabaseRole: remoteLogin.role, role: remoteLogin.role, createdAt: new Date().toISOString(), onboarded: false, profile: null, plan: null, pendingPayment: null };
             saveCurrentUser(record);
             localStorage.setItem(SESSION_KEY, email);
             form.reset(); authDialog.close();
@@ -5337,7 +5418,7 @@ const remoteLead = row => normLead({
 });
 const adminLeadsNotice = () => {
   if (adminLeadsState.loading) return '<p class="coach-demo-note">Syncing shared leads from Supabase…</p>';
-  if (adminLeadsState.error) return `<p class="coach-demo-note">Shared lead sync unavailable (${esc(adminLeadsState.error)}). Falling back to this browser's local leads.</p>`;
+  if (adminLeadsState.error) return `<p class="coach-demo-note">Shared lead sync unavailable (${esc(adminLeadsState.error)}). Falling back to this browser's local leads. <button type="button" class="auth-text-btn" id="adm-retry-leads">Retry sync</button></p>`;
   if (adminLeadsState.loaded) return '<p class="coach-demo-note">Showing shared Supabase leads across devices.</p>';
   return '';
 };
@@ -5349,8 +5430,9 @@ const loadAdminLeads = async (force = false) => {
   if (!force && adminLeadsState.loaded) return adminLeadsState.leads;
   adminLeadsState = { ...adminLeadsState, loading: true, error: '' };
   try {
+    const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
     const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads?select=id,name,phone,source,plan,status,follow_up,notes,created_at&order=created_at.desc`, {
-      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+      headers: { ...supabaseHeaders(token), Accept: 'application/json' }
     });
     const payload = await response.json().catch(() => []);
     if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
@@ -5364,10 +5446,11 @@ const loadAdminLeads = async (force = false) => {
 const writeLeadRemote = async (method, pathSuffix = '', body = null) => {
   const user = currentUser();
   if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared lead sync is not configured');
+  const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
   const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/leads${pathSuffix}`, {
     method,
     headers: {
-      ...supabaseHeaders(user.supabaseToken),
+      ...supabaseHeaders(token),
       Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
       Accept: 'application/json'
     },
@@ -5441,7 +5524,13 @@ const adminSharedReady = () => adminSupabaseState.loaded && !adminSupabaseState.
 const adminHasSharedMembers = () => adminSharedReady() && adminSupabaseState.members.length > 0;
 const adminMembersNotice = () => {
   if (adminSupabaseState.loading) return '<p class="coach-demo-note">Syncing shared members from Supabase…</p>';
-  if (adminSupabaseState.error) return `<p class="coach-demo-note">Shared Supabase member sync is unavailable (${esc(adminSupabaseState.error)}). Falling back to this browser's demo data.</p>`;
+  if (adminSupabaseState.error) {
+    const isNetwork = /failed to fetch|network|load failed/i.test(adminSupabaseState.error);
+    const hint = isNetwork
+      ? ' Check that the Supabase project is active (not paused) and the admin-members edge function is deployed — see SUPABASE_SETUP.md. Sessions now refresh automatically, so a stale login no longer breaks sync.'
+      : '';
+    return `<p class="coach-demo-note">Shared Supabase member sync is unavailable (${esc(adminSupabaseState.error)}). Falling back to this browser's demo data.${hint} <button type="button" class="auth-text-btn" id="adm-retry-sync">Retry sync</button></p>`;
+  }
   if (adminHasSharedMembers()) return '<p class="coach-demo-note">Showing shared Supabase users across devices. Create member, role, plan, renew, confirm payment, and delete now sync through Supabase. Browser-only demo accounts created without shared sync still stay on that device.</p>';
   if (adminSupabaseState.loaded) return '<p class="coach-demo-note">Connected to Supabase. Your first member created from this screen will be shared across devices.</p>';
   return '';
@@ -5510,22 +5599,41 @@ const shadowSharedMembers = members => {
 
 const loadAdminSupabaseMembers = async (force = false) => {
   const user = currentUser();
-  const token = user && user.supabaseToken ? user.supabaseToken : '';
   const endpoint = adminMembersEndpoint();
-  if (!user || !token || !endpoint || !canAccessTrainer(user)) return [];
+  if (!user || !user.supabaseToken || !endpoint || !canAccessTrainer(user)) return [];
+  let token = await ensureSupabaseToken(user);
+  if (!token) token = user.supabaseToken;
   if (!force && adminSupabaseState.loading) return adminSupabaseState.members;
   if (!force && adminSupabaseState.loaded && adminSupabaseState.token === token) return adminSupabaseState.members;
   adminSupabaseState = { ...adminSupabaseState, token, loading: true, error: '' };
-  try {
+  const attempt = async tok => {
     const response = await fetch(endpoint, {
       headers: {
         apikey: ONYX.SUPABASE_KEY,
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${tok}`
       }
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
+      const err = new Error(payload.error || payload.message || payload.msg || `HTTP ${response.status}`);
+      err.status = response.status;
+      throw err;
+    }
+    return payload;
+  };
+  try {
+    let payload;
+    try {
+      payload = await attempt(token);
+    } catch (firstError) {
+      // 401 = expired/invalid session; TypeError ("Failed to fetch") = the
+      // gateway rejected the request before a readable response reached us.
+      // In both cases one silent token refresh + retry is worth trying.
+      const retriable = firstError.status === 401 || firstError.name === 'TypeError';
+      const renewed = retriable && user.supabaseRefreshToken ? await refreshSupabaseSession(currentUser() || user) : null;
+      if (!retriable || renewed === null) throw firstError;
+      token = renewed;
+      payload = await attempt(token);
     }
     adminSupabaseState = {
       token,
@@ -5568,17 +5676,36 @@ const remoteAdminMemberWrite = async (action, payload = {}) => {
   const user = currentUser();
   const endpoint = adminMemberWriteEndpoint();
   if (!user || !user.supabaseToken || !endpoint) throw new Error('shared admin write is not configured');
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: ONYX.SUPABASE_KEY,
-      Authorization: `Bearer ${user.supabaseToken}`
-    },
-    body: JSON.stringify({ action, ...payload })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
+  let token = await ensureSupabaseToken(user);
+  if (!token) token = user.supabaseToken;
+  const send = async tok => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: ONYX.SUPABASE_KEY,
+        Authorization: `Bearer ${tok}`
+      },
+      body: JSON.stringify({ action, ...payload })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      const err = new Error(data.error || data.message || `HTTP ${response.status}`);
+      err.status = response.status;
+      throw err;
+    }
+    return data;
+  };
+  let data;
+  try {
+    data = await send(token);
+  } catch (firstError) {
+    const retriable = firstError.status === 401 || firstError.name === 'TypeError';
+    const renewed = retriable && user.supabaseRefreshToken ? await refreshSupabaseSession(currentUser() || user) : null;
+    if (!retriable || renewed === null) throw firstError;
+    token = renewed;
+    data = await send(token);
+  }
   await loadAdminSupabaseMembers(true);
   return data;
 };
@@ -5695,6 +5822,8 @@ const renderAdminMembers = () => {
     const source = m._adminSource === 'supabase' ? 'SUPABASE' : m._adminSource === 'hybrid' ? 'SUPABASE + LOCAL' : 'BROWSER ONLY';
     return `<button type="button" class="adm-row${adminMember === m.email ? ' is-on' : ''}" data-mm="${esc(m.email)}"><strong>${esc(m.name)}${m.suspended ? ' ⛔' : ''} · ${esc(r.toUpperCase())}</strong><span>${esc(m.phone || 'no phone')} · ${esc(m.plan || 'no plan')} · ${d !== null ? esc(fmtDate(m.expiresAt)) : '—'} · ${esc(st)} · ${esc(m.email)} · ${source}</span></button>`;
   }).join('') : '<p class="log-empty">No members match.</p>');
+  const retrySync = document.getElementById('adm-retry-sync');
+  if (retrySync) retrySync.addEventListener('click', () => loadAdminSupabaseMembers(true));
   renderMemberPanel();
 };
 
@@ -5753,6 +5882,8 @@ const renderAdminLeads = () => {
     (waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`) ? `<a class="wa-link" target="_blank" rel="noopener" href="${waLink(l.phone, `Hi ${l.name}! Thanks for your interest in ONYX (${l.plan}). Want a free trial session?`)}">WA</a>` : '') +
     `<button type="button" data-lead-del="${l.id}" aria-label="Delete lead">×</button></span></div>`
   ).join('') : '<p class="log-empty">No leads yet — contact-form enquiries land here automatically.</p>');
+  const retryLeads = document.getElementById('adm-retry-leads');
+  if (retryLeads) retryLeads.addEventListener('click', () => loadAdminLeads(true));
 };
 
 const renderAdminReminders = () => {
@@ -6068,8 +6199,9 @@ const loadAdminInventory = async (force = false) => {
   if (!force && adminInvState.loaded) return adminInvState.items;
   adminInvState = { ...adminInvState, loading: true, error: '' };
   try {
+    const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
     const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/inventory_items?select=id,name,price,stock,sold,threshold&order=created_at.asc`, {
-      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+      headers: { ...supabaseHeaders(token), Accept: 'application/json' }
     });
     const payload = await response.json().catch(() => []);
     if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
@@ -6084,10 +6216,11 @@ const loadAdminInventory = async (force = false) => {
 const writeInventoryRemote = async (method, pathSuffix = '', body = null) => {
   const user = currentUser();
   if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared inventory sync is not configured');
+  const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
   const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/inventory_items${pathSuffix}`, {
     method,
     headers: {
-      ...supabaseHeaders(user.supabaseToken),
+      ...supabaseHeaders(token),
       Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
       Accept: 'application/json'
     },
@@ -6138,8 +6271,9 @@ const loadAdminStaff = async (force = false) => {
   if (!force && adminStaffState.loaded) return adminStaffState.staff;
   adminStaffState = { ...adminStaffState, loading: true, error: '' };
   try {
+    const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
     const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/staff_directory?select=id,name,role,phone,salary,hours,days&order=created_at.asc`, {
-      headers: { ...supabaseHeaders(user.supabaseToken), Accept: 'application/json' }
+      headers: { ...supabaseHeaders(token), Accept: 'application/json' }
     });
     const payload = await response.json().catch(() => []);
     if (!response.ok) throw new Error(payload && payload.message ? payload.message : `HTTP ${response.status}`);
@@ -6154,10 +6288,11 @@ const loadAdminStaff = async (force = false) => {
 const writeStaffRemote = async (method, pathSuffix = '', body = null) => {
   const user = currentUser();
   if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken)) throw new Error('shared staff sync is not configured');
+  const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
   const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/staff_directory${pathSuffix}`, {
     method,
     headers: {
-      ...supabaseHeaders(user.supabaseToken),
+      ...supabaseHeaders(token),
       Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
       Accept: 'application/json'
     },
@@ -6285,10 +6420,11 @@ const loadRemoteSiteContent = async (force = false) => {
 const saveRemoteSiteContent = async data => {
   const user = currentUser();
   if (!(ONYX.SUPABASE_URL && ONYX.SUPABASE_KEY && user && user.supabaseToken && isAdminStrict(user))) throw new Error('shared site content sync is not configured');
+  const token = (await ensureSupabaseToken(user)) || user.supabaseToken;
   const response = await fetch(`${ONYX.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/site_content?id=eq.1`, {
     method: 'PATCH',
     headers: {
-      ...supabaseHeaders(user.supabaseToken),
+      ...supabaseHeaders(token),
       Prefer: 'return=minimal'
     },
     body: JSON.stringify({ payload: data, updated_at: new Date().toISOString() })
