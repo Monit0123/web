@@ -69,6 +69,25 @@ old browser-local demo data.
 If the function is not deployed yet, the admin dashboard falls back to the old
 browser-local demo list and different devices may still show different users.
 
+### Troubleshooting "Shared Supabase member sync is unavailable (Failed to fetch)"
+
+The frontend now refreshes Supabase sessions automatically (the login flow
+stores the refresh token and renews the 1-hour access token before every sync
+call), so an expired session no longer breaks member sync. If the banner still
+appears with **Failed to fetch**:
+
+1. **Function deployed?** Supabase Dashboard → Edge Functions must list both
+   `admin-members` and `admin-member-write`, deployed with **Verify JWT ON**.
+2. **Project awake?** Paused/archived free-tier projects stop answering
+   requests entirely — open the dashboard once to resume the project.
+3. **Logged in with Supabase?** Local demo accounts have no Supabase session;
+   log out and log in with the real account (new sessions pick up auto-refresh).
+4. **Network blockers?** Ad-blockers/privacy extensions or corporate proxies
+   sometimes block `*.supabase.co`. Test in a private window.
+
+The banner includes a **Retry sync** button — fix the cause, then retry
+without reloading the page.
+
 ## Payment auto-confirmation (verify-payment edge function)
 
 The site no longer activates memberships from the browser. The moment Razorpay
