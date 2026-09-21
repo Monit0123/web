@@ -5820,3 +5820,63 @@ dialog::backdrop{ backdrop-filter: blur(10px); }
   .trial-grid > div{ position:relative; background: var(--lime); }
 }
 
+
+/* === FIX v85: hidden override, schedule Book discoverability, ways balance, trial numbers, focus trap === */
+[hidden]{display:none !important}
+.memory-grid-extra[hidden]{display:none !important}
+.schedule-grid[hidden]{display:none !important}
+
+/* Schedule: desktop Book pill becomes visible on hover/focus - discoverability fix */
+.class-book .class-book-cta{opacity:0; transform:translateX(4px); transition:opacity .22s ease, transform .22s ease, background .22s}
+.class-book:hover .class-book-cta, .class-book:focus-visible .class-book-cta{opacity:1; transform:none}
+@media(max-width:900px){.class-book .class-book-cta{opacity:1; transform:none}}
+
+/* Ways: balanced flex fallback for 5 cards - centers last row naturally */
+@media(min-width:981px){
+  .ways-list{display:flex !important; flex-wrap:wrap !important; gap:16px !important; justify-content:center !important}
+  .ways-list a{flex:1 1 300px !important; max-width:360px !important; min-width:280px !important}
+  .ways-list a:nth-child(5){flex-basis:300px !important}
+}
+@media(min-width:721px) and (max-width:980px){
+  .ways-list{display:grid !important; grid-template-columns:repeat(2,1fr) !important; justify-items:center}
+  .ways-list a{width:100% !important}
+  .ways-list a:nth-child(5){grid-column:1 / -1 !important; max-width:420px !important; width:100% !important}
+}
+
+/* Trial: numbers become lime circles for pro feel */
+.trial-grid > div{position:relative; padding-top:28px !important; background:transparent !important}
+.trial-grid > div > span{
+  display:inline-grid !important; place-items:center !important;
+  width:42px !important; height:42px !important;
+  border-radius:50% !important; background:var(--ink) !important; color:var(--lime) !important;
+  font:700 13px 'DM Mono', monospace !important; letter-spacing:.06em !important;
+  border:1.5px solid var(--ink) !important; margin-bottom:10px !important;
+}
+@media(min-width:721px){
+  .trial-grid:before{top:48px !important; left:8% !important; right:8% !important; height:1.5px !important; background:rgba(7,22,22,.14) !important}
+  .trial-grid > div{background:var(--lime) !important}
+}
+
+/* Proof: subtle card lift already, add stronger first-stat emphasis */
+.proof-grid > div{padding:28px 24px 24px 0 !important}
+.proof-grid > div strong{font-weight:800 !important}
+@media(min-width:1101px){
+  .proof-grid > div:first-child strong{font-size:clamp(2.8rem,4vw,4.4rem) !important}
+}
+
+/* Facility: improve contrast on dark */
+.facility-card{background:#0f2b29 !important; border:1px solid rgba(232,229,220,.16) !important}
+.facility-list li{background:rgba(255,255,255,.06) !important; border-color:rgba(255,255,255,.14) !important; backdrop-filter:blur(4px)}
+
+/* Transformations: add subtle gold accent to meta */
+.transform-card span{color:var(--gold-light, #e8cf8f) !important}
+
+/* Ensure dialog close buttons have 44px hit area */
+.plans-close{width:44px !important; height:44px !important; min-width:44px !important; min-height:44px !important}
+
+/* Mobile menu focus visibility */
+.mobile-menu a:focus-visible{outline:2px solid var(--lime) !important; outline-offset:4px !important}
+
+/* Hero trust: ensure CTA pill doesn't orphan */
+@media(min-width:721px){.hero-trust .trust-cta{justify-self:end}}
+

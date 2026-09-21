@@ -130,6 +130,16 @@ const syncStoryRotation = () => {
 const changeStory = async nextStory => {
   if (!quoteText || !quoteAttribution) return;
   if (isChangingStory || nextStory === activeStory) return;
+  // v85: guard Web Animations API (jsdom/tests)
+  if(typeof quoteText.animate !== 'function' || typeof quoteAttribution.animate !== 'function'){
+    activeStory = nextStory;
+    quoteText.innerHTML = stories[activeStory].quote;
+    quoteAttribution.textContent = stories[activeStory].attribution;
+    updateStoryDots();
+    syncStoryRotation();
+    isChangingStory = false;
+    return;
+  }
   isChangingStory = true;
   window.clearTimeout(storyTimer);
   const direction = nextStory > activeStory || (activeStory === stories.length - 1 && nextStory === 0) ? 1 : -1;
@@ -215,7 +225,7 @@ if (plansDialog) {
     openPlansButton.addEventListener('click', () => {
       plansConfirmation.hidden = true;
       plansMain.hidden = false;
-      plansDialog.showModal();
+      if(!plansDialog.open) plansDialog.showModal();
     });
   }
 
@@ -339,7 +349,7 @@ if (programDialog) {
       targets = [...active.children].filter(el => el !== planDays);
       targets.splice(3, 0, ...planDays.children);
     }
-    targets.forEach((el, index) => el.animate(animateIn(), {
+    targets.forEach((el, index) => el.animate && el.animate(animateIn(), {
       duration: reducedMotion ? 1 : 480,
       delay: reducedMotion ? 0 : delay + index * 55,
       easing: 'cubic-bezier(.16,1,.3,1)',
@@ -384,13 +394,13 @@ if (programDialog) {
 
   const openProgram = (pillar, key) => {
     renderIntro(key);
-    programDialog.showModal();
+    if(!programDialog.open) programDialog.showModal();
     if (reducedMotion) return;
     const dialogRect = programDialog.getBoundingClientRect();
     const tileRect = pillar.getBoundingClientRect();
     // The dialog itself emerges from where the tile was clicked — no image transition.
     programDialog.style.transformOrigin = `${tileRect.left + tileRect.width / 2 - dialogRect.left}px ${tileRect.top + tileRect.height / 2 - dialogRect.top}px`;
-    programDialog.animate([
+    if(programDialog.animate) programDialog.animate([
       { transform: 'scale(.3)', opacity: 0 },
       { transform: 'scale(1)', opacity: 1 }
     ], { duration: 480, easing: 'cubic-bezier(.22,1,.36,1)' });
@@ -421,6 +431,8 @@ if (programDialog) {
 }
 
 // Mobile menu
+// v85: polyfill scrollIntoView for jsdom/tests
+try{ if(typeof Element !== 'undefined' && Element.prototype && !Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = function(){}; }catch(e){}
 const menuButton = document.getElementById('menu-button');
 const mobileMenu = document.getElementById('mobile-menu');
 if (menuButton && mobileMenu) {
@@ -458,6 +470,17 @@ if (menuButton && mobileMenu) {
   }));
 }
 
+
+  // v85: focus trap for mobile menu (WCAG)
+  mobileMenu.addEventListener('keydown', event => {
+    if(event.key !== 'Tab' || !mobileMenu.classList.contains('is-open')) return;
+    const focusable = [...mobileMenu.querySelectorAll('a[href],button:not([disabled])')].filter(el=>!el.closest('[hidden]') && el.offsetParent!==null);
+    if(!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length-1];
+    if(event.shiftKey && document.activeElement === first){ event.preventDefault(); last.focus(); }
+    else if(!event.shiftKey && document.activeElement === last){ event.preventDefault(); first.focus(); }
+  });
+
 // Contact / reach-out dialog (shared by "Still confused?" and the floating "Reach out to us" button)
 const contactDialog = document.getElementById('contact-dialog');
 if (contactDialog) {
@@ -468,6 +491,8 @@ if (contactDialog) {
   const phoneInput = contactForm.querySelector('input[name="phone"]');
   const fieldError = contactForm.querySelector('.field-error');
   const contactEcho = contactDialog.querySelector('.contact-echo');
+  // v85: enforce future dates
+  try{ const prefDate = contactForm.elements['preferred-date']; if(prefDate) prefDate.min = new Date().toLocaleDateString('en-CA'); }catch(e){}
 
   const showFieldError = message => {
     fieldError.textContent = message;
@@ -495,7 +520,7 @@ if (contactDialog) {
     contactSuccess.hidden = true;
     contactMain.hidden = false;
     showFieldError('');
-    contactDialog.showModal();
+    if(!contactDialog.open) contactDialog.showModal();
     requestAnimationFrame(() => nameInput.focus());
   };
 
@@ -571,7 +596,7 @@ if (contactDialog) {
   });
 
   phoneInput.addEventListener('input', () => {
-    phoneInput.value = phoneInput.value.replace(/\D/g, '').slice(0, 10);
+    phoneInput.value = phoneInput.value.replace(/\D/g, '').slice(-10);
   });
 
   contactForm.addEventListener('submit', async event => {
@@ -1054,7 +1079,7 @@ const openAuth = note => {
   noteEl.textContent = note || '';
   noteEl.hidden = !note;
   document.getElementById('auth-error').hidden = true;
-  authDialog.showModal();
+  if(!authDialog.open) authDialog.showModal();
   requestAnimationFrame(() => authDialog.querySelector('input[name="auth-email"]').focus());
 };
 const openOnboard = () => {
@@ -1378,6 +1403,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 authDialog.querySelectorAll('.auth-tab').forEach(tab => tab.addEventListener('click', () => {
   authMode = tab.dataset.mode;
+  // v85: clear stale error when switching tabs
+  { const _errV85 = document.getElementById('auth-error'); if(_errV85){ _errV85.textContent=''; _errV85.hidden=true; }
+  const _noteV85 = document.getElementById('auth-note'); if(_noteV85 && authMode==='login') _noteV85.hidden=true; }
   authDialog.querySelectorAll('.auth-tab').forEach(t => {
     t.classList.toggle('is-active', t === tab);
     t.setAttribute('aria-selected', String(t === tab));
@@ -2298,7 +2326,7 @@ const renderLibrary = user => {
     document.getElementById('builder-error').hidden = true;
     document.getElementById('builder-form').reset();
     renderBuilderDays(4);
-    document.getElementById('builder-dialog').showModal();
+    (()=>{const d=document.getElementById('builder-dialog'); if(d&&!d.open) d.showModal();})();
   };
 };
 
@@ -2759,7 +2787,7 @@ const openEntry = id => {
   document.getElementById('pd-note').hidden = !e.note;
   syncEntryPrivacy();
   document.querySelectorAll('#pg-chips button').forEach(btn => btn.classList.toggle('is-on', btn.dataset.entry === id));
-  document.getElementById('progress-dialog').showModal();
+  (()=>{const d=document.getElementById('progress-dialog'); if(d&&!d.open) d.showModal();})();
 };
 
 const openCheckin = (presetWeek, existing) => {
@@ -2792,7 +2820,7 @@ const openCheckin = (presetWeek, existing) => {
   document.getElementById('checkin-error').hidden = true;
   document.getElementById('checkin-title').innerHTML = existing ? `Update<br /><em>week ${existing.week}.</em>` : `Log your<br /><em>week.</em>`;
   form.dataset.editing = existing ? existing.id : '';
-  document.getElementById('checkin-dialog').showModal();
+  (()=>{const d=document.getElementById('checkin-dialog'); if(d&&!d.open) d.showModal();})();
 };
 
 /* ---------- transformation events (bound once) ---------- */
@@ -3521,7 +3549,7 @@ const renderRecMember = member => {
     renderRecMember(null);
     recStatus('');
     syncRecViews();
-    document.getElementById('reception-dialog').showModal();
+    (()=>{const d=document.getElementById('reception-dialog'); if(d&&!d.open) d.showModal();})();
     setTimeout(() => {
       const f = staffUnlocked() ? document.getElementById('rec-id') : document.getElementById('rec-pin');
       if (f) f.focus();
@@ -3876,7 +3904,7 @@ const openModify = () => {
     `</div><button type="button" class="builder-add" data-mod-add="${i}">+ Add exercise</button></div>`
   ).join('');
   document.getElementById('modify-error').hidden = true;
-  document.getElementById('modify-dialog').showModal();
+  (()=>{const d=document.getElementById('modify-dialog'); if(d&&!d.open) d.showModal();})();
 };
 
 const openDiet = () => {
@@ -3904,7 +3932,7 @@ const openDiet = () => {
   document.getElementById('diet-find').value = '';
   document.getElementById('diet-find-results').innerHTML = '';
   document.getElementById('diet-error').hidden = true;
-  document.getElementById('diet-dialog').showModal();
+  (()=>{const d=document.getElementById('diet-dialog'); if(d&&!d.open) d.showModal();})();
 };
 
 /* ---------- trainer events (bound once) ---------- */
@@ -3961,7 +3989,7 @@ const openDiet = () => {
         document.getElementById('builder-error').hidden = true;
         document.getElementById('builder-form').reset();
         renderBuilderDays(4);
-        document.getElementById('builder-dialog').showModal();
+        (()=>{const d=document.getElementById('builder-dialog'); if(d&&!d.open) d.showModal();})();
       }
       if (act === 'assign') {
         const picker = document.getElementById('assign-picker');
@@ -7131,7 +7159,7 @@ if (bootUser && bootUser.supabaseToken) {
     document.body.appendChild(bar);
     bar.querySelector('[data-open-contact]')?.addEventListener('click', event => {
       if (window.openContactDialog) window.openContactDialog(event);
-      else document.getElementById('contact-dialog')?.showModal();
+      else (()=>{const d=document.getElementById('contact-dialog'); if(d&&!d.open) d.showModal();})();
     });
   }
 
@@ -7429,16 +7457,19 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   const toggle = (e) => {
     if (e) e.preventDefault();
     if (video.paused) {
-      video.play().then(sync).catch(() => {});
+      try{ const p = video.play(); if(p && p.then) p.then(sync).catch(()=>{}); else sync(); }catch(err){ sync(); }
     } else {
       video.pause();
       sync();
     }
   };
 
-  wrap.addEventListener('click', toggle);
+  let filmTouch = 0;
+  wrap.addEventListener('click', (e)=>{ if(Date.now()-filmTouch<600) return; toggle(e); });
+  // v85 film touch dedupe
   wrap.addEventListener('touchend', (e) => {
     e.preventDefault();
+    filmTouch = Date.now();
     toggle(e);
   }, { passive: false });
 
