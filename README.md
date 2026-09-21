@@ -78,8 +78,10 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
 - **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=42`. Bump that
-  number whenever you edit `styles.css` or `script.js`.
+- **Cache busting.** Stylesheet and script are linked as `?v=82` (and
+  `sw.js` caches `onyx-shell-v82`). Bump that number in every `.html` file and
+  in `sw.js` whenever you edit `styles.css` or `script.js`, otherwise the
+  service worker keeps serving the old copy.
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
 - `profile.html` is `noindex` and disallowed in `robots.txt`; it is a private

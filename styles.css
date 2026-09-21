@@ -103,7 +103,7 @@ body:has(.plans-dialog[open]){overflow:hidden}
 .plan-card li:before{content:'—';padding-right:10px}
 .plan-card.is-selected{background:var(--lime);color:var(--ink);border-color:var(--lime)}
 .plan-card.is-selected .plan-tag,.plan-card.is-selected ul,.plan-card.is-selected .plan-price span{color:#3c4a15}
-.plan-select{--tile-fill:var(--lime);margin-top:auto;display:inline-flex;align-items:center;justify-content:space-between;gap:14px;width:100%;min-height:52px;padding:8px 9px 8px 18px;border:2px solid rgba(232,229,220,.75);border-radius:999px;background:transparent;color:var(--paper);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;transition:border-color .22s,color .22s}
+.plan-select{font-family:inherit;cursor:pointer;--tile-fill:var(--lime);margin-top:auto;display:inline-flex;align-items:center;justify-content:space-between;gap:14px;width:100%;min-height:52px;padding:8px 9px 8px 18px;border:2px solid rgba(232,229,220,.75);border-radius:999px;background:transparent;color:var(--paper);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;transition:border-color .22s,color .22s}
 .plan-select .arrow-icon{width:38px;height:38px;border:2px solid currentColor;border-radius:50%;flex:0 0 38px}
 .plan-select.is-hovered{color:var(--ink);border-color:var(--tile-fill)}
 .plan-card.is-selected .plan-select{--tile-fill:#0b2020;color:var(--ink);border-color:var(--ink)}
@@ -4518,6 +4518,7 @@ dialog:focus{outline:none}
 /* Typography optical: headings tighter on large */
 h1{letter-spacing:-.075em!important;line-height:.88!important}
 h2{letter-spacing:-.07em!important}
+.legal-body .legal-kicker{letter-spacing:.14em!important}
 .manifesto h2{letter-spacing:-.08em!important}
 .ways-title h2,.memories h2,.trainer-heading h2{letter-spacing:-.07em!important}
 
@@ -5230,3 +5231,275 @@ h2{letter-spacing:-.07em!important}
   transform:scale(1.06) translateZ(0)!important;
   opacity:.14!important;
 }
+
+/* ===========================================================================
+   MOBILE USABILITY PASS
+   Touch targets brought to the 44px minimum, a menu that can actually be
+   closed, and readable labels on the fixed bars. Visual design is unchanged —
+   only hit areas, one stacking order and two label sizes are adjusted.
+   =========================================================================== */
+
+/* 1. Header hamburger was a bare 21px glyph (≈24×28 hit area). */
+.menu-button {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  line-height: 1;
+}
+
+/* 3. Log in / Sign up tabs were 38px tall. */
+.auth-tab { min-height: 44px; padding: 15px 8px; }
+
+@media (max-width: 720px) {
+  /* 4. Keep the ☰ / ✕ toggle visible on phones. (The overlay stacking itself is
+        already handled by `.menu-open .site-header{z-index:13}` above.) */
+  .menu-button { display: flex; }
+
+  /* 5. Fixed bars used 9px labels — hard to read on a phone. */
+  .mobile-action-bar a,
+  .mobile-action-bar button { font-size: 11px; }
+  .member-bottom-nav a { font-size: 11px; min-width: 56px; }
+  .member-bottom-nav b { font-size: 18px; }
+
+  /* 6. Footer links were 11px text with no padding — fiddly to tap. */
+  footer div { flex-wrap: wrap; row-gap: 2px; }
+  footer a { display: inline-flex; align-items: center; min-height: 44px; }
+
+  .demo-banner { font-size: 10px; }
+}
+
+/* ===========================================================================
+   TESTIMONIAL CAROUSEL — WCAG 2.2.2 (Pause, Stop, Hide)
+   =========================================================================== */
+
+/* Visible pause control. `.quote-footer button` (0,1,1) would otherwise force
+   every footer button into a 38px circle, so this is qualified to (0,2,0). */
+.quote-footer .story-pause {
+  width: auto;
+  height: auto;
+  min-height: 44px;
+  margin-left: 0;
+  padding: 0 18px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #587029;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: 700 10px 'DM Mono', monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease, border-color .2s ease;
+}
+.quote-footer .story-pause:hover { background: rgba(7, 22, 22, .12); }
+.quote-footer .story-pause[aria-pressed="true"] {
+  background: #071616;
+  border-color: #071616;
+  color: var(--lime);
+}
+/* The global focus ring is lime, which is invisible on this lime panel. */
+.quote-footer .story-pause:focus-visible { outline: 3px solid #071616; outline-offset: 3px; }
+
+/* The dots' ::before hit area was clipped by the overflow:hidden used for the
+   progress fill. The fill only ever scales down inside the box, so unclipping
+   is visually identical and the 44px-tall target finally works. */
+.quote-footer .story-dot { overflow: visible; }
+
+
+/* ===========================================================================
+   STORY CAROUSEL DOTS — real, visible, touch-sized controls
+   They were 17–20 × 3px bars at 20% opacity: effectively invisible and far
+   below any usable tap target. Each dot is now a 44px-tall button; the pill
+   you see (34 × 8px) is drawn by ::before (track) and ::after (progress fill),
+   and the row sits in normal flow beside the attribution and the pause button
+   instead of floating over the panel.
+   =========================================================================== */
+
+.quote .story-dots {
+  position: static;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quote-footer .story-dot {
+  position: relative;
+  width: 34px;
+  height: 44px !important;          /* beats the earlier height:4px!important */
+  padding: 0;
+  margin-left: 0;
+  border: 0 !important;
+  border-radius: 6px;
+  background: transparent !important;
+  overflow: visible;
+  cursor: pointer;
+  touch-action: manipulation;
+  transform: none;
+  transition: none;
+}
+
+/* Track */
+.quote-footer .story-dot::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 999px;
+  background: rgba(7, 22, 22, .30);
+  transition: background .2s ease;
+}
+
+/* Progress fill — @keyframes story-progress (scaleX 0 → 1) still drives it */
+.quote-footer .story-dot::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 999px;
+  background: rgba(7, 22, 22, .85);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.quote-footer .story-dot.is-active::before { background: rgba(7, 22, 22, .18); }
+
+/* Hover / focus highlight the pill, not the 44px box, so it never looks like a blob */
+.quote-footer .story-dot:hover,
+.quote-footer .story-dot:focus-visible {
+  background: transparent !important;
+  transform: none;
+}
+.quote-footer .story-dot:hover::before { background: rgba(7, 22, 22, .48); }
+/* The old ring used lime on a lime panel; use ink so it is actually visible */
+.quote-footer .story-dot:focus-visible {
+  outline: 3px solid #071616;
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.quote-footer .story-dot:disabled { cursor: wait; opacity: .7; }
+
+@media (max-width: 720px) {
+  /* Attribution gets its own row; dots and Pause share the second row. */
+  .quote-footer { flex-wrap: wrap; row-gap: 14px; }
+  .quote-attribution { flex: 1 0 100%; }
+  .quote .story-dots { gap: 8px; margin-right: auto; }
+}
+
+/* ===========================================================================
+   TRAINER RAIL — prev/next controls, position read-out, focusable region
+   The panel is pale (#d3d9d2) with ink text, so the buttons and the focus ring
+   are ink — the site's default lime ring would disappear here.
+   =========================================================================== */
+
+.rail-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 8vw 0;
+}
+.rail-btn {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(7, 22, 22, .45);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease, border-color .2s ease, opacity .2s ease;
+}
+.rail-btn:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #d3d9d2;
+}
+.rail-btn:disabled { opacity: .32; cursor: default; }
+.rail-btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+
+.rail-status {
+  margin: 0;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: rgba(7, 22, 22, .72);
+}
+
+/* The rail is focusable now (tabindex="0") so arrow keys can reach it. */
+.trainer-rail:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 8px;
+}
+
+@media (max-width: 720px) {
+  .rail-controls { margin: 2px 6vw 0; gap: 10px; }
+  .rail-status { font-size: 10px; }
+  .trainer-rail:focus-visible { outline-offset: 4px; }
+}
+
+/* ---------------------------------------------------------------------------
+   TIMETABLE — day picker + per-class booking (see script.js "TIMETABLE").
+   Above 900px the full week stays on screen and each class is a quiet text
+   button that underlines on hover/focus. Below 900px the day chips appear, the
+   grid drops to a single day — no more 740px sideways scroll — and each class
+   carries a Book pill on a real 44px tap target.
+   --------------------------------------------------------------------------- */
+.schedule-days{display:none}
+.schedule-caption{margin:40px 0 0;font:9px 'DM Mono';letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.schedule-caption+.schedule-grid{margin-top:18px}
+.class-book{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;background:none;border:0;border-bottom:1px solid transparent;margin:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color .2s}
+.class-book:hover,.class-book:focus-visible{border-bottom-color:currentColor}
+.class-book-cta{display:none}
+/* Author display rules beat the UA [hidden] rule regardless of specificity,
+   so the cells hidden by the day picker need this to actually disappear. */
+.schedule-grid [hidden]{display:none!important}
+@media (max-width:900px){
+  .schedule-days{display:flex;flex-wrap:wrap;gap:8px;margin:28px 0 0}
+  .schedule-day{min-height:44px;min-width:44px;padding:0 16px;border:1px solid rgba(232,229,220,.28);border-radius:999px;background:transparent;color:var(--muted);font:10px 'DM Mono';letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
+  .schedule-day:hover{border-color:rgba(232,229,220,.6);color:var(--paper)}
+  .schedule-day[aria-pressed="true"]{background:var(--lime);border-color:var(--lime);color:var(--ink)}
+  /* The selected chip is lime, so the site-wide lime focus ring vanishes on it. */
+  .schedule-day[aria-pressed="true"]:focus-visible{outline-color:var(--ink)}
+  .schedule-grid[data-day]{margin-top:14px}
+  .schedule-grid[data-day] .schedule-head,.schedule-grid[data-day] .schedule-row{grid-template-columns:70px 1fr;min-width:0}
+  .schedule-grid[data-day] .schedule-row>span{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0}
+  .schedule-grid[data-day] .schedule-row>.schedule-time{padding:14px 0}
+  .schedule-grid[data-day] .class-book{padding:14px 0;min-height:44px;border-bottom:0}
+  .class-book-cta{display:inline-flex;flex:none;align-items:center;padding:8px 14px;border-radius:999px;background:var(--lime);color:var(--ink);font:9px 'DM Mono';letter-spacing:.12em;text-transform:uppercase}
+}
+
+/* ---------------------------------------------------------------------------
+   ADMIN REPORTS — period selector + CSV export toolbar.
+   Matches the existing .adm-add control styling so the tab reads as one system.
+   --------------------------------------------------------------------------- */
+.rp-toolbar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin-bottom:12px}
+.rp-period{display:flex;flex-direction:column;gap:6px;min-width:190px}
+.rp-period select{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;padding:11px 14px;font-size:.85rem;font-family:inherit;min-width:0;min-height:44px;cursor:pointer}
+.rp-period select option{color:#141414}
+.rp-export{background:var(--lime);color:var(--ink);border:none;border-radius:10px;padding:11px 18px;font-weight:800;cursor:pointer;font-family:inherit;font-size:.8rem;min-height:44px}
+.rp-export:disabled{opacity:.45;cursor:not-allowed}
+.rp-period select:focus-visible{outline:3px solid var(--lime);outline-offset:3px}
+/* The export button is lime, so the site-wide lime ring disappears on it. */
+.rp-export:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+.rp-note{margin:0 0 12px;color:var(--muted);font-size:.68rem;letter-spacing:.1em;line-height:1.7;text-transform:uppercase}
