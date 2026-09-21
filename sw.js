@@ -1,8 +1,8 @@
-const CACHE = 'onyx-shell-v72';
+const CACHE = 'onyx-shell-v82';
 const APP_SHELL = [
-  './', './index.html?v=72', './styles.css?v=72', './script.js?v=72', './site.webmanifest',
+  './', './index.html?v=82', './styles.css?v=82', './script.js?v=82', './site.webmanifest',
   './assets/gym-hero.webp', './assets/gym-hero-900.webp', './assets/favicon.svg',
-  './assets/film/walk-06-wide.jpg?v=72'
+  './assets/film/walk-06-wide.jpg?v=82'
 ];
 
 self.addEventListener('install', event => {

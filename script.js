@@ -100,9 +100,32 @@ const updateStoryDots = () => {
     activeDot.classList.add('is-active');
   }
 };
-const startStoryTimer = () => {
+/* ── WCAG 2.2.2 — the rotation can always be paused ────────────────────────
+   Auto-advance stops for the visible Pause control, for pointer hover over the
+   quote, for keyboard focus anywhere inside it, for prefers-reduced-motion
+   (starts paused), and while the tab is hidden.
+   While it runs the quote is aria-live="off" so a screen reader is not
+   interrupted every 6 s; once stopped it becomes "polite" so changes made with
+   the dots or the control are announced (WAI-ARIA carousel pattern). */
+const quoteSection = document.querySelector('.quote');
+const storyPauseButton = document.getElementById('story-pause');
+const storyReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const storyCanHover = window.matchMedia('(hover: hover)');
+let storyUserPaused = storyReducedMotion.matches;
+let storyHoverHold = false;
+let storyFocusHold = false;
+
+const storyRotationRunning = () => !storyUserPaused && !storyHoverHold && !storyFocusHold;
+
+const syncStoryRotation = () => {
   window.clearTimeout(storyTimer);
-  storyTimer = window.setTimeout(() => changeStory((activeStory + 1) % stories.length), storyDelay);
+  const running = storyRotationRunning();
+  if (quoteText) quoteText.setAttribute('aria-live', running ? 'off' : 'polite');
+  if (storyPauseButton) {
+    storyPauseButton.setAttribute('aria-pressed', String(storyUserPaused));
+    storyPauseButton.title = storyUserPaused ? 'Start automatic rotation' : 'Stop automatic rotation';
+  }
+  if (running) storyTimer = window.setTimeout(() => changeStory((activeStory + 1) % stories.length), storyDelay);
 };
 const changeStory = async nextStory => {
   if (!quoteText || !quoteAttribution) return;
@@ -135,10 +158,36 @@ const changeStory = async nextStory => {
   quoteAttribution.getAnimations().forEach(animation => animation.cancel());
   storyDots.forEach(dot => { dot.disabled = false; });
   isChangingStory = false;
-  startStoryTimer();
+  syncStoryRotation();
 };
 storyDots.forEach((dot, index) => dot.addEventListener('click', () => changeStory(index)));
-startStoryTimer();
+
+if (storyPauseButton) {
+  storyPauseButton.addEventListener('click', () => {
+    storyUserPaused = !storyUserPaused;
+    syncStoryRotation();
+  });
+}
+if (quoteSection) {
+  if (storyCanHover.matches) {
+    quoteSection.addEventListener('pointerenter', () => { storyHoverHold = true; syncStoryRotation(); });
+    quoteSection.addEventListener('pointerleave', () => { storyHoverHold = false; syncStoryRotation(); });
+  }
+  quoteSection.addEventListener('focusin', () => { storyFocusHold = true; syncStoryRotation(); });
+  quoteSection.addEventListener('focusout', event => {
+    if (event.relatedTarget && quoteSection.contains(event.relatedTarget)) return;
+    storyFocusHold = false;
+    syncStoryRotation();
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) window.clearTimeout(storyTimer);
+  else syncStoryRotation();
+});
+storyReducedMotion.addEventListener('change', event => {
+  if (event.matches) { storyUserPaused = true; syncStoryRotation(); }
+});
+syncStoryRotation();
 
 // Membership plans dialog
 const plansDialog = document.getElementById('plans-dialog');
@@ -186,7 +235,7 @@ if (plansDialog) {
     if (!selectedCard) return;
     const paymentLink = PAYMENT_LINKS[selectedCard.dataset.plan];
     if (paymentLink) { beginPaymentFlow(paymentLink, selectedCard.dataset.plan); return; }
-    plansConfirmation.querySelector('.chosen-plan').textContent = selectedCard.dataset.plan;
+    setConfirmationPending(plansConfirmation, selectedCard.dataset.plan);
     plansMain.hidden = true;
     plansConfirmation.hidden = false;
   });
@@ -416,14 +465,97 @@ if (contactDialog) {
     fieldError.hidden = !message;
   };
 
-  const openContact = () => {
+  // The dialog is opened from ten different buttons ("Book free trial", "Talk to
+  // a coach", "Support"…), so it introduces itself with the action the visitor
+  // actually asked for instead of one generic heading for every entry point.
+  const CONTACT_HEADINGS = [
+    { test: /trial|free class|first class|book in/i, eyebrow: 'Free trial', title: 'Book your<br /><em>free trial.</em>' },
+    { test: /coach|trainer|speak|talk|support|question/i, eyebrow: 'Talk to a coach', title: 'Talk to a<br /><em>coach.</em>' },
+    { test: /visit|tour|direction|find us|come/i, eyebrow: 'Visit ONYX', title: 'Plan your<br /><em>visit.</em>' }
+  ];
+  const CONTACT_DEFAULT_HEADING = { eyebrow: 'Reach out to us', title: 'Talk to a<br /><em>human.</em>' };
+  const contactEyebrow = contactMain.querySelector('.eyebrow');
+  const contactTitle = contactDialog.querySelector('#contact-title');
+
+  // Set by openClassBooking() when a visitor taps a specific session in the
+  // timetable. Every other opener clears it, so a stale class can never leak
+  // into an unrelated enquiry.
+  let booking = null;
+
+  const showContact = () => {
     contactSuccess.hidden = true;
     contactMain.hidden = false;
     showFieldError('');
     contactDialog.showModal();
     requestAnimationFrame(() => nameInput.focus());
   };
+
+  const openContact = event => {
+    booking = null;
+    const label = String(event?.currentTarget?.textContent || '').replace(/\s+/g, ' ').trim();
+    const heading = CONTACT_HEADINGS.find(h => h.test.test(label)) || CONTACT_DEFAULT_HEADING;
+    if (contactEyebrow) contactEyebrow.textContent = heading.eyebrow;
+    if (contactTitle) contactTitle.innerHTML = heading.title;
+    showContact();
+  };
+
+  /* Per-class booking. The timetable hands over the exact session, so the
+     visitor never retypes it and the gym receives it in the lead record.
+     Time windows are read off the form itself — never hardcoded — so renaming
+     an option cannot silently break the prefill. */
+  const FULL_DAY = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday', Sun: 'Sunday' };
+  const toMinutes = hhmm => { const [h, m] = String(hhmm).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+
+  const slotFor = (hhmm, timeField) => {
+    if (!timeField) return '';
+    const mins = toMinutes(hhmm);
+    let best = '', bestDist = Infinity;
+    [...timeField.options].forEach(option => {
+      const bounds = option.value.match(/\d{1,2}:\d{2}/g);
+      if (!bounds || bounds.length < 2) return;
+      const shift = /pm/i.test(option.value) ? 12 * 60 : 0;
+      const normalise = value => { const v = toMinutes(value); return v + (shift && v < 12 * 60 ? shift : 0); };
+      const dist = Math.min(Math.abs(mins - normalise(bounds[0])), Math.abs(mins - normalise(bounds[1])));
+      if (dist < bestDist) { bestDist = dist; best = option.value; }
+    });
+    return best;
+  };
+
+  // Next date that falls on the class's weekday, so "Mon 06:00" prefill is a
+  // real future date rather than an empty field the visitor must work out.
+  const nextDateFor = dayAbbr => {
+    const order = Object.keys(FULL_DAY);
+    const target = order.indexOf(dayAbbr);
+    if (target < 0) return '';
+    const now = new Date();
+    const today = (now.getDay() + 6) % 7;               // 0 = Monday
+    const delta = (target - today + 7) % 7 || 7;        // never a past date
+    return new Date(now.getTime() + delta * 86400000).toLocaleDateString('en-CA');
+  };
+
+  const openClassBooking = session => {
+    const name = String(session?.name || '').trim();
+    const day = String(session?.day || '').trim();
+    const time = String(session?.time || '').trim();
+    if (!name) return;
+    booking = { name, day, time };
+    if (contactEyebrow) contactEyebrow.textContent = 'Book a class';
+    if (contactTitle) {
+      contactTitle.innerHTML = `${esc(name)}<br /><em>${esc(FULL_DAY[day] || day)} &middot; ${esc(time)}</em>`;
+    }
+    const dateField = contactForm.elements['preferred-date'];
+    const timeField = contactForm.elements['preferred-time'];
+    if (dateField) dateField.value = nextDateFor(day);
+    const slot = slotFor(time, timeField);
+    if (timeField && slot) timeField.value = slot;
+    showContact();
+  };
+  // Exposed because the timetable builds its Book buttons after this block runs.
+  window.openClassBooking = openClassBooking;
   document.querySelectorAll('[data-open-contact]').forEach(button => button.addEventListener('click', openContact));
+  // Exposed so controls created later (mobile action bar) open the same way and
+  // get the same contextual heading.
+  window.openContactDialog = openContact;
 
   contactDialog.addEventListener('click', event => {
     if (event.target === contactDialog) contactDialog.close();
@@ -457,7 +589,7 @@ if (contactDialog) {
       consent: !!contactForm.elements['contact-consent']?.checked,
       status: 'lead',
       followUp: '',
-      notes: ''
+      notes: booking ? `Requested class: ${booking.name} \u2014 ${booking.day} ${booking.time}` : ''
     };
     const supabaseLead = {
       name,
@@ -470,7 +602,8 @@ if (contactDialog) {
       experience: valueOf('experience') || null,
       consent: !!contactForm.elements['contact-consent']?.checked,
       status: 'lead',
-      notes: `Page: ${window.location.pathname}`,
+      notes: `Page: ${window.location.pathname}` +
+        (booking ? ` \u00b7 Requested class: ${booking.name}, ${booking.day} ${booking.time}` : ''),
       follow_up: null
     };
     try {
@@ -500,7 +633,9 @@ if (contactDialog) {
     // No endpoint (or it failed): hand the lead straight to a human instead of
     // letting it die in localStorage. WhatsApp first, email as the fallback.
     if (!delivered) {
-      const message = `Hi ONYX, please call me back.\n\nName: ${name}\nPhone: +91 ${phone}\nPage: ${window.location.pathname}`;
+      const message = `Hi ONYX, please call me back.\n\nName: ${name}\nPhone: +91 ${phone}` +
+        (booking ? `\nClass: ${booking.name}, ${booking.day} ${booking.time}` : '') +
+        `\nPage: ${window.location.pathname}`;
       const handoff = contactSuccess.querySelector('.contact-handoff') || (() => {
         const el = document.createElement('p');
         el.className = 'contact-handoff';
@@ -519,7 +654,8 @@ if (contactDialog) {
       }
     }
 
-    contactEcho.textContent = `${name.toUpperCase()} · +91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
+    contactEcho.textContent = `${name.toUpperCase()} · +91 ${phone.slice(0, 5)} ${phone.slice(5)}` +
+      (booking ? ` · ${booking.name}, ${booking.day} ${booking.time}` : '');
     const successEyebrow = contactSuccess.querySelector('.eyebrow');
     const successTitle = contactSuccess.querySelector('.contact-success-title');
     const successCopy = contactSuccess.querySelector('.plans-confirmation-copy');
@@ -786,7 +922,7 @@ const supabaseAuth = async (mode, email, password, name) => {
       body: JSON.stringify(mode === 'signup' ? { email, password, data: { full_name: name } } : { email, password })
     });
   } catch (netErr) {
-    const e = new Error('Could not reach Supabase — using local demo account instead. Check your internet or Supabase project status.');
+    const e = new Error('We could not reach the server. Please check your connection and try again.');
     e.code = 'NETWORK';
     throw e;
   }
@@ -794,7 +930,7 @@ const supabaseAuth = async (mode, email, password, name) => {
   if (!response.ok) {
     // Supabase rate-limit for confirmation emails (free tier is ~3-4/hour)
     if (response.status === 429) {
-      const e = new Error('Supabase email limit reached — confirmation emails are rate-limited on the free tier. Your account may already exist in Supabase Dashboard → Authentication → Users. Try Log in in a minute, or for a dummy/demo project disable Confirm email: Supabase Dashboard → Authentication → Providers → Email → disable Confirm email. Meanwhile we will create a local demo account so you can continue.');
+      const e = new Error('We could not send the confirmation email just now. Please try again in a few minutes, or use Log in if you already have an account.');
       e.code = 'RATE_LIMIT';
       e.status = 429;
       e.payload = payload;
@@ -803,11 +939,11 @@ const supabaseAuth = async (mode, email, password, name) => {
     // Common Supabase signup errors that still create the user
     const msg = (payload.msg || payload.error_description || payload.message || '').toLowerCase();
     if (mode === 'signup' && (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already registered'))) {
-      const e = new Error('That email already exists in Supabase — try Log in instead.');
+      const e = new Error('That email is already registered — please use Log in.');
       e.code = 'USER_EXISTS';
       throw e;
     }
-    const e = new Error(payload.msg || payload.error_description || payload.message || 'Supabase authentication failed.');
+    const e = new Error(payload.msg || payload.error_description || payload.message || 'We could not sign you in. Please try again.');
     e.code = 'SUPABASE_ERROR';
     e.status = response.status;
     e.payload = payload;
@@ -854,10 +990,10 @@ const supabaseAuth = async (mode, email, password, name) => {
 if (!document.getElementById('auth-dialog')) {
   document.body.insertAdjacentHTML('beforeend', `
     <dialog class="auth-dialog" id="auth-dialog" aria-labelledby="auth-title">
-      <form method="dialog"><button class="plans-close" aria-label="Close" value="close">✕</button></form>
+      <form method="dialog"><button class="plans-close" aria-label="Close" value="close"><span aria-hidden="true">✕</span></button></form>
       <p class="eyebrow">Member access</p>
       <h2 id="auth-title">Your ONYX<br /><em>account.</em></h2>
-      <div class="auth-tabs" role="tablist"><button type="button" class="auth-tab is-active" data-mode="login">Log in</button><button type="button" class="auth-tab" data-mode="signup">Sign up</button></div>
+      <div class="auth-tabs" role="tablist" aria-label="Log in or create an account"><button type="button" class="auth-tab is-active" role="tab" id="auth-tab-login" aria-selected="true" aria-controls="auth-form" data-mode="login">Log in</button><button type="button" class="auth-tab" role="tab" id="auth-tab-signup" aria-selected="false" aria-controls="auth-form" data-mode="signup">Sign up</button></div>
       <p class="auth-note" id="auth-note" hidden></p>
       <form class="auth-form" id="auth-form" novalidate>
         <label class="field" id="auth-name-field" hidden><span class="field-label">YOUR NAME</span><input type="text" name="auth-name" autocomplete="name" placeholder="e.g. Aarav Sharma" /></label>
@@ -865,9 +1001,8 @@ if (!document.getElementById('auth-dialog')) {
         <label class="field"><span class="field-label">PASSWORD</span><input type="password" name="auth-password" autocomplete="current-password" placeholder="Min. 6 characters" /></label>
         <p class="field-error" id="auth-error" role="alert" hidden></p>
         <button type="submit" class="auth-submit">Log in</button>
-        <div class="auth-alt" style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
-          <small style="color:var(--muted);font:10px 'DM Mono';line-height:1.6">Supabase free tier limits confirmation emails (~3-4/hour). If you hit 429, use Log in if account exists, or wait 1 hour. For dummy/demo projects: Supabase Dashboard → Authentication → Providers → Email → disable Confirm email.</small>
-          <button type="button" class="auth-text-btn" id="auth-use-local" style="align-self:flex-start">Use local demo account instead</button>
+        <div class="auth-alt" style="margin-top:14px;display:flex;flex-direction:column;gap:8px" hidden>
+          <button type="button" class="auth-text-btn" id="auth-use-local" style="align-self:flex-start">Continue without the server</button>
         </div>
       </form>
     </dialog>`);
@@ -877,7 +1012,7 @@ if (!document.getElementById('onboard-dialog')) {
   const group = (label, field, chipsHtml) => `<div class="ob-group"><span class="field-label">${label}</span><div class="ob-chips" data-field="${field}">${chipsHtml}</div></div>`;
   document.body.insertAdjacentHTML('beforeend', `
     <dialog class="onboard-dialog" id="onboard-dialog" aria-labelledby="onboard-title">
-      <form method="dialog"><button class="plans-close" aria-label="Skip assessment" value="close">✕</button></form>
+      <form method="dialog"><button class="plans-close" aria-label="Skip assessment" value="close"><span aria-hidden="true">✕</span></button></form>
       <p class="eyebrow">Your assessment</p>
       <h2 id="onboard-title">Built for<br /><em>your body.</em></h2>
       <p class="contact-copy">Seven quick answers — your training week and diet plan write themselves onto your profile page.</p>
@@ -1050,14 +1185,39 @@ const beginPaymentFlow = (link, plan) => {
   if (document.body.classList.contains('profile-page')) renderProfile();
 };
 
+/* Put the confirmation panel back into its PENDING wording.
+   The verified-return path (see the razorpay_payment_link_status handler)
+   rewrites the heading and replaces the copy paragraph's text outright, which
+   destroys the .chosen-plan element. Without this reset a LATER pending payment
+   inherits "Payment confirmed." plus the previous plan's activation date, and
+   silently loses its plan name. So rebuild the wording every time rather than
+   trusting whatever the last render happened to leave behind. */
+const setConfirmationPending = (confirmation, plan) => {
+  if (!confirmation) return null;
+  const eyebrow = confirmation.querySelector('.eyebrow');
+  if (eyebrow) eyebrow.textContent = 'You\u2019re all set';
+  const heading = confirmation.querySelector('h3');
+  if (heading) heading.innerHTML = 'Welcome to<br /><em>ONYX.</em>';
+  let copyEl = confirmation.querySelector('.plans-confirmation-copy');
+  if (!copyEl) {
+    copyEl = document.createElement('p');
+    copyEl.className = 'plans-confirmation-copy';
+    if (heading) heading.after(copyEl);
+    else confirmation.appendChild(copyEl);
+  }
+  copyEl.innerHTML = `You chose <strong class="chosen-plan">${esc(plan)}</strong>. ` +
+    'Our team will reach out within 24 hours to set up your first session.';
+  const chosenEl = confirmation.querySelector('.chosen-plan');
+  if (chosenEl) chosenEl.textContent = plan;
+  return copyEl;
+};
+
 const showPaymentPending = payment => {
   const dialog = document.getElementById('plans-dialog');
   if (!dialog) return;
   const main = dialog.querySelector('.plans-main');
   const confirmation = dialog.querySelector('.plans-confirmation');
-  const copyEl = confirmation.querySelector('.plans-confirmation-copy');
-  const chosenEl = confirmation.querySelector('.chosen-plan');
-  if (chosenEl) chosenEl.textContent = payment.plan;
+  const copyEl = setConfirmationPending(confirmation, payment.plan);
 
   let note = confirmation.querySelector('.payment-ref');
   if (!note) {
@@ -1093,7 +1253,7 @@ const showPaymentPending = payment => {
   const verifyBtn = document.createElement('button');
   verifyBtn.type = 'button';
   verifyBtn.className = 'solid-button directional-tile';
-  verifyBtn.innerHTML = `<span>${ONYX.DEMO_MODE ? 'Verify (demo — simulates)' : ONYX.MEMBERSHIP_VERIFY_ENDPOINT ? 'Verify payment' : 'Check payment status'}</span><b class="arrow-icon">→</b>`;
+  verifyBtn.innerHTML = `<span>${ONYX.DEMO_MODE ? 'Verify (demo — simulates)' : ONYX.MEMBERSHIP_VERIFY_ENDPOINT ? 'Verify payment' : 'Check payment status'}</span><b class="arrow-icon" aria-hidden="true">→</b>`;
   verifyBtn.onclick = async () => {
     verifyBtn.disabled = true;
     verifyBtn.querySelector('span').textContent = 'Verifying…';
@@ -1208,7 +1368,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 authDialog.querySelectorAll('.auth-tab').forEach(tab => tab.addEventListener('click', () => {
   authMode = tab.dataset.mode;
-  authDialog.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('is-active', t === tab));
+  authDialog.querySelectorAll('.auth-tab').forEach(t => {
+    t.classList.toggle('is-active', t === tab);
+    t.setAttribute('aria-selected', String(t === tab));
+  });
   document.getElementById('auth-name-field').hidden = authMode === 'login';
   authDialog.querySelector('.auth-submit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
 }));
@@ -1219,7 +1382,7 @@ if (useLocalBtn) {
     // Temporarily disable Supabase for this session so local demo works instantly
     const note = document.getElementById('auth-note');
     if (note) {
-      note.textContent = 'Using local demo accounts (stored in this browser only). Supabase is bypassed until you reload the page. For dummy projects, disable Confirm email in Supabase to avoid 429 limits.';
+      note.textContent = 'Continuing without the server — your details stay in this browser only. Reload the page to reconnect.';
       note.hidden = false;
     }
     const err = document.getElementById('auth-error');
@@ -1227,7 +1390,7 @@ if (useLocalBtn) {
     // Clear Supabase config for this page load
     ONYX.SUPABASE_URL = '';
     ONYX.SUPABASE_KEY = '';
-    useLocalBtn.textContent = 'Local mode active — reload to use Supabase again';
+    useLocalBtn.textContent = 'Offline mode active — reload the page to reconnect';
     useLocalBtn.disabled = true;
   });
 }
@@ -1321,7 +1484,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
         setTimeout(() => {
           const note = document.getElementById('auth-note');
           if (note) {
-            note.textContent = 'Supabase account created — confirmation email required. For a dummy project, disable Confirm email in Supabase Dashboard → Authentication → Providers → Email. Meanwhile a local demo account was created so you can continue.';
+            note.textContent = 'Your account is created. Check your inbox to confirm your email, then use Log in.';
             note.hidden = false;
           }
         }, 400);
@@ -1352,7 +1515,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
         // Fallback to local demo account so user isn't blocked
         const users = readUsers();
         if (users[email]) {
-          return fail('Supabase email limit reached — that email already exists. Wait a minute and use Log in, or use your local demo password. For dummy projects: Supabase → Auth → Providers → Email → disable Confirm email.');
+          return fail('We could not send the confirmation email just now. Please try again in a few minutes, or use Log in if you already have an account.');
         }
         try {
           const localRec = await createLocalAccount(email, password, name);
@@ -1376,7 +1539,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
           const submitBtn = authDialogEl.querySelector('.auth-submit');
           if (submitBtn) submitBtn.textContent = 'Log in';
         }
-        return fail('That email already exists in Supabase — switched to Log in. Enter your password to continue.');
+        return fail('That email is already registered — we have switched you to Log in. Enter your password to continue.');
       }
       // For login, if Supabase fails, try local fallback instead of hard error
       if (authMode === 'login') {
@@ -1388,9 +1551,9 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
         } else {
           // No local account either — show Supabase error but hint at local creation
           if (error.code === 'RATE_LIMIT') {
-            return fail('Supabase email limit reached — try again in 60 seconds, or create a local demo account by using Sign up with a different email. For dummy projects disable Confirm email in Supabase.');
+            return fail('Too many attempts in a short time. Please wait a minute and try again.');
           }
-          return fail(error.message || 'Could not connect to Supabase. If you have a local demo account, try again — we will fallback automatically.');
+          return fail('We could not reach the server. Please try again in a moment.');
         }
       } else {
         // Signup — any other Supabase error, fallback to local demo so user isn't blocked
@@ -1405,7 +1568,7 @@ document.getElementById('auth-form').addEventListener('submit', async event => {
             return;
           }
         } catch (e) { /* fall through */ }
-        return fail(error.message || 'Could not connect to Supabase.');
+        return fail('We could not reach the server. Please try again in a moment.');
       }
     }
   }
@@ -1868,7 +2031,7 @@ const fmtDate = iso => {
 };
 const planMonths = plan => {
   if (!plan) return 0;
-  const m = String(plan).match(/^(\d+)\s*months?\s*membership/i);
+  const m = String(plan).trim().match(/^(\d+)\s*months?(?:\s*membership)?/i);
   if (m) return parseInt(m[1], 10);
   if (/^monthly/i.test(plan)) return 1;
   if (/single PT/i.test(plan)) return 1;
@@ -2111,7 +2274,7 @@ const renderLibrary = user => {
       ).join('')}</div>` : '') +
       `<div class="lib-actions"><button type="button" data-lib="${p.id}" data-act="preview">${open ? 'Hide' : 'Preview'}</button>` +
       (isActive
-        ? '<button type="button" disabled>Active ✓</button>'
+        ? '<button type="button" disabled>Active <span aria-hidden="true">✓</span></button>'
         : `<button type="button" data-lib="${p.id}" data-act="start">Start program</button>`) +
       (coach && !p.builtin ? `<button type="button" data-lib="${p.id}" data-act="official">${p.official ? 'Unofficial' : 'Make official'}</button>` : '') +
       (canDelete ? `<button type="button" data-lib="${p.id}" data-act="del">Delete</button>` : '') +
@@ -3106,7 +3269,11 @@ let lastQRSlot = -1;
 const drawPassQR = user => {
   const canvas = document.getElementById('pass-qr');
   if (!canvas || !user.memberId) return;
-  const ctx = canvas.getContext('2d');
+  // getContext() returns null when the 2D context is unavailable; without this
+  // guard the catch block below throws on the same null ctx and the whole
+  // attendance section render dies.
+  const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+  if (!ctx) return;
   try {
     const q = QR.encode(qrPayload(user));
     const cell = Math.floor(canvas.width / (q.size + 8));
@@ -3193,7 +3360,7 @@ const renderAttendance = user => {
     success.hidden = false;
     const time = new Date(last.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
     document.getElementById('att-s-sub').textContent =
-      `${time} · ${METHOD_LABELS[last.method] || last.method}${stats.streak > 1 ? ` · 🔥 ${stats.streak}-day streak` : ''}`;
+      `${time} · ${METHOD_LABELS[last.method] || last.method || 'Check-in'}${stats.streak > 1 ? ` · 🔥 ${stats.streak}-day streak` : ''}`;
     document.getElementById('att-s-num').textContent = `SESSION #${visits.length}`;
   } else success.hidden = true;
 
@@ -3513,14 +3680,14 @@ const renderCoachGate = user => {
   const box = document.getElementById('coach-gate-body');
   if (!box) return;
   if (!user) {
-    box.innerHTML = '<p class="about-hero-desc">Log in with your trainer account. Trainers are assigned via Supabase profiles.role = trainer. Managers and admins can also access this dashboard.</p><button type="button" class="program-get-started" id="coach-login"><span>Log in</span></button>';
+    box.innerHTML = '<p class="about-hero-desc">Log in with your trainer account. Owners and managers also have access.</p><button type="button" class="program-get-started" id="coach-login"><span>Log in</span></button>';
     document.getElementById('coach-login').addEventListener('click', () => openAuth('Log in with your coach account.'));
   } else {
     const r = roleOf(user);
     if (r === 'member') {
-      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — member account cannot access trainer dashboard. Go to <a href="profile.html">Member Dashboard</a> or ask admin to set your role to trainer in Supabase.</p><button type="button" class="plan-ghost" id="coach-logout-gate">Log out</button>`;
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this is a member account, so the coach area is not available. <a href="profile.html">Go to your member dashboard</a>, or ask a manager to give your account coach access.</p><button type="button" class="plan-ghost" id="coach-logout-gate">Log out</button>`;
     } else {
-      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. If you should have trainer access, set profiles.role = trainer in Supabase or add email to COACH_EMAILS. Admins/managers have automatic access.</p><a class="program-get-started pf-member-link" href="mailto:vx.monit@gmail.com?subject=${encodeURIComponent(`Coach access request — ${user.email}`)}"><span>Request access</span></a><button type="button" class="plan-ghost" id="coach-logout-gate" style="margin-top:12px">Log out</button>`;
+      box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. If you should have coach access, ask a manager to update your account. Owners and managers have access automatically.</p><a class="program-get-started pf-member-link" href="mailto:vx.monit@gmail.com?subject=${encodeURIComponent(`Coach access request — ${user.email}`)}"><span>Request access</span></a><button type="button" class="plan-ghost" id="coach-logout-gate" style="margin-top:12px">Log out</button>`;
     }
     const lg = document.getElementById('coach-logout-gate');
     if (lg) lg.addEventListener('click', () => { localStorage.removeItem(SESSION_KEY); updateAuthLinks(); renderCoach(); });
@@ -3623,7 +3790,7 @@ const renderClientDetail = (coach, m) => {
     (thread.length ? thread.map(x => `<p class="${x.from === 'coach' ? 'from-me' : 'from-coach'}"><span>${x.img ? `<img src="${x.img}" alt="Shared photo" loading="lazy" />` : ''}${esc(x.text || '')}</span><small>${esc(fmtDate(x.at))}</small></p>`).join('') : '<p class="log-empty">No messages yet.</p>') + `</div>` +
     `<form data-form="msg" class="cform"><input name="text" maxlength="500" placeholder="Message this member…" /><label class="pc-attach" title="Attach a photo">📎<input type="file" name="photo" accept="image/*" hidden /></label><button type="submit">Send</button></form></section>` +
   `<section class="cblock"><span class="today-tag">ATTENDANCE</span><p class="csub">${stats.pct}% · STREAK ${stats.streak} (BEST ${stats.best}) · ${stats.total} VISITS · ${stats.monthDays} THIS MONTH</p><ul class="clist">` +
-    (visits.length ? [...visits].reverse().slice(0, 6).map(v => `<li><span><strong>${esc(fmtDate(v.at))}</strong>${esc((METHOD_LABELS[v.method] || v.method).toUpperCase())}</span></li>`).join('') : '<li class="log-empty">No visits yet.</li>') + `</ul></section>` +
+    (visits.length ? [...visits].reverse().slice(0, 6).map(v => `<li><span><strong>${esc(fmtDate(v.at))}</strong>${esc(String(METHOD_LABELS[v.method] || v.method || 'Check-in').toUpperCase())}</span></li>`).join('') : '<li class="log-empty">No visits yet.</li>') + `</ul></section>` +
   `<section class="cblock"><span class="today-tag">WORKOUT HISTORY</span>` +
     (doneDates.length ? `<div class="chips">${doneDates.map(d => `<span>${esc(d.slice(5))} ✓</span>`).join('')}</div>` : '<p class="log-empty">No completed workouts logged.</p>') +
     `<p class="csub">MEMBERSHIP: ${esc(memberStatus(m))}${p ? ` · GOAL ${(GOAL_LABELS[p.goal] || '').toUpperCase()} · ${p.weight} → ${p.target} KG` : ''}</p></section>` +
@@ -4440,8 +4607,8 @@ const aiPRs = user => {
 const aiCoach = user => {
   const coach = aiCoachName(user);
   return coach
-    ? `<p>Your coach is <strong>${esc(coach)}</strong> — for program changes, injuries, or anything personal, they're the human to ask.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-coach">Open Coach Corner →</button></p>`
-    : `<p>No coach assigned yet — I can handle general guidance, but a human coach is worth it for personal programming. Ask at the front desk or message us and we'll match you.</p><p><button type="button" class="ai-goto" data-open-contact>Message the team →</button></p>`;
+    ? `<p>Your coach is <strong>${esc(coach)}</strong> — for program changes, injuries, or anything personal, they're the human to ask.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-coach">Open Coach Corner <span aria-hidden="true">→</span></button></p>`
+    : `<p>No coach assigned yet — I can handle general guidance, but a human coach is worth it for personal programming. Ask at the front desk or message us and we'll match you.</p><p><button type="button" class="ai-goto" data-open-contact>Message the team <span aria-hidden="true">→</span></button></p>`;
 };
 
 const aiWater = () => `<p>Target <strong>3–4 litres a day</strong>, +500–750ml per hour of training. Practical rule: carry the bottle, sip between sets, and check your urine — pale yellow means you're on track.</p>`;
@@ -4492,7 +4659,7 @@ const aiGenerate = (user, q) => {
   const items = [`Warm-up — 5 min bike/row + arm circles + leg swings`, ...pool.slice(0, count).map(([n, s, r]) => `${n} — ${s} × ${r} (rest ${focus === 'hiit' ? 'as written' : s >= 4 ? '2–3 min' : '60–90s'})`), `Cool-down — 5 min easy cardio + full-body stretch`];
   const label = `${mins}-Min ${focus.charAt(0).toUpperCase() + focus.slice(1)}`;
   lastAIWorkout = { name: `${label} — AI Built`, focus: label, items };
-  return `<p>Here's your <strong>${label} workout</strong> (~${mins} min):</p><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p><button type="button" class="ai-goto" data-ai-save>Save to my programs →</button></p><p class="ai-fine">New to these lifts? Ask a coach to check your form on the big compounds first.</p>`;
+  return `<p>Here's your <strong>${label} workout</strong> (~${mins} min):</p><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul><p><button type="button" class="ai-goto" data-ai-save>Save to my programs <span aria-hidden="true">→</span></button></p><p class="ai-fine">New to these lifts? Ask a coach to check your form on the big compounds first.</p>`;
 };
 
 /* ---------- router ---------- */
@@ -4590,7 +4757,7 @@ const aiViaEndpoint = async (user, text) => {
     chips.innerHTML = QUICK.map(q => `<button type="button" data-ai-chip="${esc(q)}">${esc(q)}</button>`).join('');
     const user = currentUser();
     if (!user) {
-      bubble('bot', `<p>Namaste ✦ I'm the ONYX AI coach — I read your program, diet, and progress to answer personally.</p><p><button type="button" class="ai-goto" data-ai-login>Log in to start →</button></p>`, false);
+      bubble('bot', `<p>Namaste ✦ I'm the ONYX AI coach — I read your program, diet, and progress to answer personally.</p><p><button type="button" class="ai-goto" data-ai-login>Log in to start <span aria-hidden="true">→</span></button></p>`, false);
       return;
     }
     (user.aiChat || []).forEach(m => bubble(m.r === 'u' ? 'user' : 'bot', m.h, false));
@@ -4682,7 +4849,7 @@ const aiViaEndpoint = async (user, text) => {
       });
       saveCurrentUser(user);
       renderLibrary(user);
-      bubble('bot', `<p>Saved <strong>${esc(lastAIWorkout.name)}</strong> to your program library — start it anytime from below.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-library">Open library →</button></p>`);
+      bubble('bot', `<p>Saved <strong>${esc(lastAIWorkout.name)}</strong> to your program library — start it anytime from below.</p><p><button type="button" class="ai-goto" data-ai-goto="profile-library">Open library <span aria-hidden="true">→</span></button></p>`);
     }
   });
 })();
@@ -4738,7 +4905,7 @@ const paintWeightCard = (user, ws) => {
   const current = uniq.length ? uniq[uniq.length - 1].weight : +p.weight || 0;
   const target = +mg.target > 0 ? +mg.target : +p.target || 0;
   if (!start || !current) {
-    box.innerHTML = `<p class="log-empty">Log your weight to start tracking — save a weekly check-in and it lands here automatically.</p><p><button type="button" class="goal-link" data-goal-goto="profile-progress">Log a check-in →</button></p>`;
+    box.innerHTML = `<p class="log-empty">Log your weight to start tracking — save a weekly check-in and it lands here automatically.</p><p><button type="button" class="goal-link" data-goal-goto="profile-progress">Log a check-in <span aria-hidden="true">→</span></button></p>`;
     return;
   }
   if (!target || target === start) {
@@ -5283,7 +5450,7 @@ const renderBooking = user => {
   const mine = (user.sessions || []).filter(s => s.status === 'scheduled' || s.status === 'requested')
     .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
   document.getElementById('bk-mine').innerHTML = mine.length ? mine.map(s =>
-    `<div class="nt-row"><b>📅</b><span><strong>${esc(s.type || 'Session')}</strong> · ${esc(fmtDate(`${s.date}T12:00:00`))} ${esc(fmtClock(s.time))}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}<small>${s.coach ? esc((readUsers()[s.coach] || {}).name || s.coach) : 'ONYX coach'}</small></span><button type="button" data-bk-cancel="${s.id}">Cancel</button></div>`
+    `<div class="nt-row"><b aria-hidden="true">📅</b><span><strong>${esc(s.type || 'Session')}</strong> · ${esc(fmtDate(`${s.date}T12:00:00`))} ${esc(fmtClock(s.time))}${s.status === 'requested' ? ' · AWAITING CONFIRMATION' : ''}<small>${s.coach ? esc((readUsers()[s.coach] || {}).name || s.coach) : 'ONYX coach'}</small></span><button type="button" data-bk-cancel="${s.id}">Cancel</button></div>`
   ).join('') : '<p class="log-empty">No upcoming bookings.</p>';
 };
 
@@ -5387,6 +5554,15 @@ const renderAvail = coach => {
    =========================================================================== */
 const PLAN_PRICES = { 'Monthly': 1999, '3 months': 5499, '6 months': 9999, '12 months': 17999 };
 const PLAN_DAYS = { 'Monthly': 30, '3 months': 90, '6 months': 180, '12 months': 365 };
+/* Plan names exist in two shapes: the admin selectors write the short key
+   ('3 months') while the payment flow stores the full Razorpay plan name
+   ('3 months membership' — see beginPaymentFlow / verify-payment). Every price
+   and duration lookup goes through these helpers so both shapes resolve; a
+   raw PLAN_PRICES[m.plan] lookup silently returned 0 / 30 days for members who
+   paid online. */
+const planKey = plan => String(plan || '').trim().replace(/\s*membership$/i, '').trim();
+const planPrice = plan => PLAN_PRICES[planKey(plan)] || 0;
+const planDays = plan => PLAN_DAYS[planKey(plan)] || 30;
 const inr = n => '₹' + Number(n || 0).toLocaleString('en-IN');
 const LEADS_KEY = 'onyx-leads';
 let adminLeadsState = { loading: false, loaded: false, error: '', leads: [] };
@@ -5572,6 +5748,15 @@ const adminRoster = () => {
   });
 };
 
+// Single lookup used by the member panel and the [data-act] handlers: finds the
+// merged roster record (Supabase / hybrid / browser-only) for one email.
+const adminMemberRecord = email => {
+  if (!email) return null;
+  const key = String(email).trim().toLowerCase();
+  if (!key) return null;
+  return adminRoster().find(member => String(member.email || '').trim().toLowerCase() === key) || null;
+};
+
 const shadowSharedMembers = members => {
   const users = readUsers();
   let changed = false;
@@ -5722,16 +5907,16 @@ const renderAdmin = () => {
     gate.hidden = false; dash.hidden = true; main.hidden = true;
     const box = document.getElementById('admin-gate-body');
     if (!user) {
-      box.innerHTML = '<p class="about-hero-desc">Log in with your owner/manager account to open the control center. Admin accounts are assigned via Supabase profiles.role = admin/manager.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
+      box.innerHTML = '<p class="about-hero-desc">Log in with your owner or manager account to open the control center.</p><button type="button" class="program-get-started" id="admin-login"><span>Log in</span></button>';
       document.getElementById('admin-login').addEventListener('click', () => openAuth('Log in with your admin account.'));
     } else {
       const r = roleOf(user);
       if (r === 'member') {
-        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this is a member account. Admin access requires role <strong>admin</strong> or <strong>manager</strong> in Supabase profiles table. <a href="profile.html">Go to member dashboard</a>.</p><button type="button" class="plan-ghost" id="admin-logout-gate">Log out</button>`;
+        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — this is a member account, so the control center is not available. <a href="profile.html">Go to your member dashboard</a>.</p><button type="button" class="plan-ghost" id="admin-logout-gate">Log out</button>`;
       } else if (r === 'trainer') {
         box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — trainer account. Trainers use <a href="trainers.html">Coach Dashboard</a>. Admin access requires manager/admin role.</p><button type="button" class="plan-ghost" id="admin-logout-gate">Log out</button>`;
       } else {
-        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. Need admin/manager. Check Supabase profiles.role or ADMIN_EMAILS config.</p>`;
+        box.innerHTML = `<p class="about-hero-desc">Signed in as ${esc(user.email)} — role ${esc(r)}. The control center needs an owner or manager account.</p>`;
       }
       const logoutGate = document.getElementById('admin-logout-gate');
       if (logoutGate) logoutGate.addEventListener('click', () => {
@@ -5766,8 +5951,8 @@ const renderAdmin = () => {
   const members = adminRoster().filter(member => roleOf(member) === 'member');
   const today = dayKey();
   const active = members.filter(memberActive);
-  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
-  const pending = members.filter(m => m.pendingPayment).reduce((a, m) => a + (PLAN_PRICES[(m.pendingPayment || {}).plan] || 0), 0);
+  const revenue = active.reduce((a, m) => a + planPrice(m.plan), 0);
+  const pending = members.filter(m => m.pendingPayment).reduce((a, m) => a + planPrice((m.pendingPayment || {}).plan), 0);
   const new30 = members.filter(m => m.createdAt && (Date.now() - new Date(m.createdAt)) / 86400000 <= 30).length;
   const expiring = members.filter(m => { const d = daysLeft(m); return d !== null && d >= 0 && d <= 7; }).length;
   const todayAtt = members.reduce((a, m) => a + ((m.visits || []).filter(v => String(v.at || '').slice(0, 10) === today).length), 0);
@@ -5846,7 +6031,7 @@ const renderMemberPanel = () => {
       `<p class="coach-demo-note">This member is synced from Supabase and these edits now write back cross-device.</p>` +
       (pendingShared ? `<p class="csub">⏳ PENDING: ${esc(m.plan)}${m.paymentReference ? ` · REF ${esc(m.paymentReference)}` : ''} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
       `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
-      `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
+      `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${planKey(m.plan) === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
       `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
       `<div class="crow"><select id="mm-newrole" aria-label="Change role"><option value="member"${currentRole==='member'?' selected':''}>Member</option><option value="trainer"${currentRole==='trainer'?' selected':''}>Trainer</option><option value="manager"${currentRole==='manager'?' selected':''}>Manager</option><option value="admin"${currentRole==='admin'?' selected':''}>Admin</option></select><button type="button" data-act="setrole" data-email="${esc(m.email)}">Set role</button></div>` +
       `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
@@ -5857,9 +6042,9 @@ const renderMemberPanel = () => {
   box.innerHTML = `<div class="adm-panel"><h3>${esc(m.name)}${m.suspended ? ' ⛔ SUSPENDED' : ''} · ${esc(currentRole.toUpperCase())}</h3>` +
     `<p class="csub">${esc(m.email).toUpperCase()} · ${esc((m.phone || 'NO PHONE').toUpperCase())} · LV ${levelOf(pointsOf(m)).n} · ${visits.length} VISITS · STREAK ${calcStreak(m.checkins)} · LAST ${esc(String(last)).toUpperCase()}</p>` +
     `<p class="csub">PLAN: ${esc((m.plan || '—').toUpperCase())} · EXPIRES: ${m.expiresAt ? esc(fmtDate(m.expiresAt)) : '—'} · TRAINER: ${esc(coachName.toUpperCase())} · ROLE: ${esc(currentRole.toUpperCase())}</p>` +
-    (pend ? `<p class="csub">⏳ PENDING: ${esc(pend.plan)} · REF ${esc(pend.ref)} · ${inr(PLAN_PRICES[pend.plan] || 0)} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
+    (pend ? `<p class="csub">⏳ PENDING: ${esc(pend.plan)} · REF ${esc(pend.ref)} · ${inr(planPrice(pend.plan))} <button type="button" data-act="confirm-pay" data-email="${esc(m.email)}">Confirm payment</button></p>` : '') +
     `<div class="crow"><span class="csub">RENEW:</span>${[1, 3, 6, 12].map(mo => `<button type="button" data-act="renew" data-mo="${mo}" data-email="${esc(m.email)}">+${mo}mo</button>`).join('')}</div>` +
-    `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${m.plan === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
+    `<div class="crow"><select id="mm-newplan" aria-label="Change plan"><option value="">No plan</option>${Object.keys(PLAN_PRICES).map(pn => `<option${planKey(m.plan) === pn ? ' selected' : ''}>${pn}</option>`).join('')}</select><button type="button" data-act="setplan" data-email="${esc(m.email)}">Set plan</button>` +
     `<select id="mm-newcoach" aria-label="Assign trainer"><option value="">No trainer</option>${coachList().map(c => `<option value="${esc(c.email)}"${m.assignedCoach === c.email ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" data-act="setcoach" data-email="${esc(m.email)}">Assign</button></div>` +
     `<div class="crow"><select id="mm-newrole" aria-label="Change role"><option value="member"${currentRole==='member'?' selected':''}>Member</option><option value="trainer"${currentRole==='trainer'?' selected':''}>Trainer</option><option value="manager"${currentRole==='manager'?' selected':''}>Manager</option><option value="admin"${currentRole==='admin'?' selected':''}>Admin</option></select><button type="button" data-act="setrole" data-email="${esc(m.email)}">Set role</button><span class="csub">SUPABASE profiles.role SHOULD MATCH</span></div>` +
     `<div class="crow"><button type="button" data-act="suspend" data-email="${esc(m.email)}">${m.suspended ? 'Unsuspend' : 'Suspend'}</button><button type="button" data-act="delmember" data-email="${esc(m.email)}">Delete</button>` +
@@ -5940,6 +6125,12 @@ const renderAdminReminders = () => {
     adminTab = btn.dataset.atab;
     renderAdmin();
   });
+  const reportPeriodSelect = document.getElementById('rp-period');
+  if (reportPeriodSelect) reportPeriodSelect.addEventListener('change', () => renderAdminReports());
+  const reportExport = document.getElementById('rp-export');
+  // Deferred arrow, like every other admin listener: these consts are declared
+  // further down the file, so passing the bare reference would hit the TDZ.
+  if (reportExport) reportExport.addEventListener('click', () => exportReports());
   document.getElementById('mm-search').addEventListener('input', () => renderAdminMembers());
   document.getElementById('mm-plan').addEventListener('change', () => renderAdminMembers());
   document.getElementById('mm-add-toggle').addEventListener('click', () => {
@@ -5965,7 +6156,7 @@ const renderAdminReminders = () => {
         users[email] = {
           name, email, algo, salt, pass: hash, phone: phone.length === 10 ? phone : '',
           createdAt: new Date().toISOString(), onboarded: false, profile: null,
-          plan, expiresAt: plan ? new Date(Date.now() + (PLAN_DAYS[plan] || 30) * 86400000).toISOString() : null,
+          plan, expiresAt: plan ? new Date(Date.now() + planDays(plan) * 86400000).toISOString() : null,
           pendingPayment: null
         };
         writeUsers(users);
@@ -6037,7 +6228,7 @@ const renderAdminReminders = () => {
           updateLocalAdminShadow(m.email, rec => ({ ...rec, pendingPayment: null, plan, expiresAt: plan ? rec.expiresAt : null }));
         } else {
           m.plan = plan;
-          if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + (PLAN_DAYS[m.plan] || 30) * 86400000).toISOString();
+          if (m.plan && !m.expiresAt) m.expiresAt = new Date(Date.now() + planDays(m.plan) * 86400000).toISOString();
           saveMember(m);
         }
         renderAdmin();
@@ -6077,9 +6268,9 @@ const renderAdminReminders = () => {
           updateLocalAdminShadow(m.email, rec => ({ ...rec, pendingPayment: null, plan: pend.plan }));
         } else {
           m.plan = pend.plan;
-          m.expiresAt = new Date(Date.now() + (PLAN_DAYS[pend.plan] || 30) * 86400000).toISOString();
+          m.expiresAt = new Date(Date.now() + planDays(pend.plan) * 86400000).toISOString();
           m.pendingPayment = null;
-          pushNotif(m, '💳', `Payment of ${inr(PLAN_PRICES[pend.plan] || 0)} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
+          pushNotif(m, '💳', `Payment of ${inr(planPrice(pend.plan))} confirmed — ${pend.plan} active till ${fmtDate(m.expiresAt)}.`);
           saveMember(m);
         }
         renderAdmin();
@@ -6303,17 +6494,24 @@ const writeStaffRemote = async (method, pathSuffix = '', body = null) => {
   await loadAdminStaff(true);
   return payload;
 };
-const trainerLoad = () => {
+// since = epoch ms cutoff. Omitted by the Staff tab (all-time), passed by
+// Reports so session counts respect the selected period. Client counts stay
+// current either way — a roster is not a historical fact.
+const trainerLoad = (since = null) => {
   const members = Object.values(readUsers()).filter(u => u && isMember(u));
   return coachList().map(c => {
     const clients = members.filter(m => m.assignedCoach === c.email);
     let sched = 0, done = 0;
     members.forEach(m => (m.sessions || []).forEach(s => {
       if (s.coach !== c.email) return;
+      if (since !== null) {
+        const t = new Date(s.date).getTime();
+        if (Number.isNaN(t) || t < since) return;
+      }
       if (s.status === 'done') done++;
       else if (s.status === 'scheduled' || s.status === 'requested') sched++;
     }));
-    const value = clients.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+    const value = clients.reduce((a, m) => a + planPrice(m.plan), 0);
     return { name: c.name, email: c.email, clients: clients.length, sched, done, value };
   });
 };
@@ -6345,10 +6543,71 @@ const rpBars = pairs => {
     `<div><span>${esc(label)}</span><span class="ch-bar"><i style="width:${Math.round((v / max) * 100)}%"></i></span><b>${esc(disp !== undefined ? disp : String(v))}</b></div>`
   ).join('') + `</div>`;
 };
+/* ---------------------------------------------------------------------------
+   REPORTS — period selector + CSV export + real empty states.
+   Attendance and sign-ups are genuinely historical, so the period applies to
+   them. Revenue is the LIVE value of currently active plans (there is no
+   billing ledger in the browser), so it stays labelled as a snapshot and the
+   period-filtered number beside it is new plan value booked in the window.
+   --------------------------------------------------------------------------- */
+let reportRows = [];
+
+const reportPeriod = () => {
+  const el = document.getElementById('rp-period');
+  return el ? el.value : '30';
+};
+const reportPeriodLabel = () => {
+  const v = reportPeriod();
+  return v === 'all' ? 'ALL TIME' : `LAST ${v} DAYS`;
+};
+// Reports are computed synchronously from storage, so a spinner would be fake.
+// What the reader does need to know is WHERE the numbers came from.
+const adminReportsNotice = () => {
+  if (adminSupabaseState.loading) return 'Shared sync in progress \u2014 these figures come from this browser and refresh the moment it lands.';
+  if (adminSupabaseState.error) return `Shared sync unavailable (${adminSupabaseState.error}) \u2014 showing this browser\u2019s records.`;
+  if (adminSharedReady()) return 'Includes shared Supabase records.';
+  return 'Showing records stored in this browser.';
+};
+
+const csvCell = value => {
+  const text = String(value ?? '');
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+const buildReportCSV = () =>
+  '\uFEFF' + ['section,label,value', ...reportRows.map(r => r.map(csvCell).join(','))].join('\r\n') + '\r\n';
+
+const exportReports = () => {
+  const button = document.getElementById('rp-export');
+  if (!reportRows.length) {
+    if (button) button.title = 'Nothing to export yet';
+    return;
+  }
+  const blob = new Blob([buildReportCSV()], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `onyx-report-${reportPeriod() === 'all' ? 'all' : reportPeriod() + 'd'}-${dayKey()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+};
+
 const renderAdminReports = () => {
+  const since = reportPeriod() === 'all' ? null : Date.now() - Number(reportPeriod()) * 86400000;
+  const inPeriod = value => {
+    if (since === null) return true;
+    const t = new Date(value).getTime();
+    return !Number.isNaN(t) && t >= since;
+  };
+  const row = (section, label, value) => { reportRows.push([section, label, value]); };
+  reportRows = [];
+
   const members = Object.values(readUsers()).filter(u => u && isMember(u));
   const active = members.filter(memberActive);
-  const revenue = active.reduce((a, m) => a + (PLAN_PRICES[m.plan] || 0), 0);
+  const revenue = active.reduce((a, m) => a + planPrice(m.plan), 0);
+  const joined = active.filter(m => inPeriod(m.activatedAt || m.createdAt));
+  const booked = joined.reduce((a, m) => a + planPrice(m.plan), 0);
   const planCounts = {};
   active.forEach(m => { planCounts[m.plan] = (planCounts[m.plan] || 0) + 1; });
   const popular = Object.entries(planCounts).sort((a, b) => b[1] - a[1])[0];
@@ -6356,31 +6615,76 @@ const renderAdminReports = () => {
   const avgDur = withBoth.length ? Math.round(withBoth.reduce((a, m) => a + (new Date(m.expiresAt) - new Date(m.createdAt)) / 86400000, 0) / withBoth.length) : 0;
   const expired = members.filter(m => m.plan && !memberActive(m)).length;
   const churn = (active.length + expired) ? Math.round((expired / (active.length + expired)) * 100) : 0;
-  document.getElementById('rp-revenue').innerHTML = `<strong>REVENUE & MEMBERSHIP</strong>` +
-    `<p class="csub">ACTIVE REVENUE ${inr(revenue)} · AVG MEMBERSHIP ${avgDur} DAYS · CHURN ${churn}% · MOST POPULAR: ${popular ? esc(popular[0]) + ` (${popular[1]})` : '—'}</p>` +
-    rpBars(Object.entries(planCounts).map(([plan, n]) => [plan, n * (PLAN_PRICES[plan] || 0), `${n} × ${inr(PLAN_PRICES[plan] || 0)}`])) +
-    `<p class="csub">FULL DAILY/WEEKLY/MONTHLY HISTORY NEEDS BACKEND BILLING — THIS IS LIVE PLAN VALUE.</p>`;
+
+  const note = document.getElementById('rp-note');
+  if (note) note.textContent = `${reportPeriodLabel()} \u00b7 ${adminReportsNotice()}`;
+
+  row('summary', 'period', reportPeriodLabel());
+  row('summary', 'generated', new Date().toISOString());
+  row('summary', 'active members', active.length);
+  row('summary', 'active revenue', revenue);
+  row('summary', 'avg membership days', avgDur);
+  row('summary', 'churn %', churn);
+  row('summary', 'joined in period', joined.length);
+  row('summary', 'new plan value in period', booked);
+
+  Object.entries(planCounts).forEach(([plan, n]) => {
+    row('plan mix', plan, n);
+    row('plan mix', `${plan} value`, n * planPrice(plan));
+  });
+
+  document.getElementById('rp-revenue').innerHTML = `<strong>REVENUE &amp; MEMBERSHIP</strong>` +
+    (active.length
+      ? `<p class="csub">ACTIVE REVENUE ${inr(revenue)} \u00b7 AVG MEMBERSHIP ${avgDur} DAYS \u00b7 CHURN ${churn}% \u00b7 MOST POPULAR: ${popular ? esc(popular[0]) + ` (${popular[1]})` : '\u2014'}</p>` +
+        `<p class="csub">${esc(reportPeriodLabel())}: ${joined.length} JOINED \u00b7 ${inr(booked)} NEW PLAN VALUE</p>` +
+        rpBars(Object.entries(planCounts).map(([plan, n]) => [plan, n * planPrice(plan), `${n} \u00d7 ${inr(planPrice(plan))}`]))
+      : `<p class="log-empty">No active memberships yet. Activate a plan on the Members tab and its value appears here.</p>`) +
+    `<p class="csub">ACTIVE REVENUE IS LIVE PLAN VALUE, NOT BILLED HISTORY \u2014 PERIOD BILLING NEEDS A BACKEND LEDGER.</p>`;
+
   const hours = Array(24).fill(0);
   const wdays = Array(7).fill(0);
-  let total = 0, month = 0;
-  const mk = dayKey().slice(0, 7);
+  const byDay = {};
+  let total = 0;
   members.forEach(m => (m.visits || []).forEach(v => {
     const d = new Date(v.at);
-    if (Number.isNaN(d)) return;
+    if (Number.isNaN(d) || !inPeriod(v.at)) return;
     total++;
-    if (String(v.at).slice(0, 7) === mk) month++;
     hours[d.getHours()]++;
     wdays[d.getDay()]++;
+    const k = String(v.at).slice(0, 10);
+    byDay[k] = (byDay[k] || 0) + 1;
   }));
   const wdNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  Object.keys(byDay).sort().forEach(d => row('visits by day', d, byDay[d]));
+  hours.forEach((v, h) => { if (v > 0) row('visits by hour', `${h}:00`, v); });
+  wdays.forEach((v, i) => row('visits by weekday', wdNames[i], v));
+
+  const peak = hours.map((v, h) => [`${h}:00`, v]).filter(([, v]) => v > 0);
   document.getElementById('rp-attendance').innerHTML = `<strong>ATTENDANCE</strong>` +
-    `<p class="csub">${total} TOTAL VISITS · ${month} THIS MONTH</p>` +
-    `<p class="csub">PEAK HOURS</p>` + rpBars(hours.map((v, h) => [`${h}:00`, v]).filter(([, v], h) => v > 0 || (h >= 5 && h <= 22)).filter((_, i, a) => a.length <= 24)) +
-    `<p class="csub">ACTIVE DAYS</p>` + rpBars(wdays.map((v, i) => [wdNames[i], v]));
-  const load = trainerLoad();
+    (total
+      ? `<p class="csub">${total} VISIT${total === 1 ? '' : 'S'} IN ${esc(reportPeriodLabel())} \u00b7 ${Object.keys(byDay).length} ACTIVE DAY${Object.keys(byDay).length === 1 ? '' : 'S'}</p>` +
+        `<p class="csub">PEAK HOURS</p>` + rpBars(peak) +
+        `<p class="csub">ACTIVE DAYS</p>` + rpBars(wdays.map((v, i) => [wdNames[i], v]).filter(([, v]) => v > 0))
+      : `<p class="log-empty">No check-ins in ${esc(reportPeriodLabel().toLowerCase())}. Widen the period above, or log check-ins on a member\u2019s profile.</p>`);
+
+  const load = trainerLoad(since);
+  const sessions = load.reduce((a, t) => a + t.sched + t.done, 0);
+  load.forEach(t => {
+    row('trainer', t.name, t.clients);
+    row('trainer sessions', `${t.name} scheduled`, t.sched);
+    row('trainer sessions', `${t.name} done`, t.done);
+  });
   document.getElementById('rp-trainers').innerHTML = `<strong>TRAINERS</strong>` + (load.length
-    ? rpBars(load.map(t => [t.name, t.clients, `${t.clients} clients · ${t.done + t.sched} sessions`]))
+    ? `<p class="csub">${sessions} SESSION${sessions === 1 ? '' : 'S'} IN ${esc(reportPeriodLabel())}</p>` +
+      rpBars(load.map(t => [t.name, t.clients, `${t.clients} clients \u00b7 ${t.done + t.sched} sessions`])) +
+      (sessions ? '' : `<p class="log-empty">No sessions logged in this period yet \u2014 client counts above are current, not period-specific.</p>`)
     : '<p class="log-empty">No coaches on this device yet.</p>');
+
+  const exportBtn = document.getElementById('rp-export');
+  if (exportBtn) {
+    exportBtn.disabled = !reportRows.length;
+    exportBtn.title = reportRows.length ? `Download ${reportRows.length} rows as CSV` : 'Nothing to export yet';
+  }
 };
 
 /* ---------- site content ---------- */
@@ -6588,7 +6892,7 @@ ${f.a}`).join('\n\n') : '';
   form.elements.hours.value = (site.contact || {}).hours || '';
   form.elements.address.value = (site.contact || {}).address || '';
   const note = document.getElementById('site-saved');
-  if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Shared via Supabase' : '';
+  if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Live across devices' : '';
 };
 
 /* ---------- tab-2 events (bound once) ---------- */
@@ -6743,7 +7047,7 @@ ${f.a}`).join('\n\n') : '';
       }
       sessionStorage.removeItem('onyx-ann-x');
       const note = document.getElementById('site-saved');
-      if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Saved — live across devices via Supabase.' : 'Saved — live on this browser immediately.';
+      if (note) note.textContent = siteSharedState.loaded && !siteSharedState.error ? 'Saved — live across devices.' : 'Saved — live on this browser immediately.';
     } catch (error) {
       const note = document.getElementById('site-saved');
       if (note) note.textContent = error && error.message ? error.message : 'Could not save site content';
@@ -6811,9 +7115,12 @@ if (bootUser && bootUser.supabaseToken) {
     const bar = document.createElement('nav');
     bar.className = 'mobile-action-bar';
     bar.setAttribute('aria-label', 'Quick actions');
-    bar.innerHTML = `<a href="tel:${phone}" aria-label="Call ONYX">☎ <span>Call</span></a><a href="https://wa.me/${whatsapp}" target="_blank" rel="noopener" aria-label="Message ONYX on WhatsApp">◌ <span>WhatsApp</span></a><button type="button" data-open-contact aria-label="Book a free trial">＋ <span>Book trial</span></button>`;
+    bar.innerHTML = `<a href="tel:${phone}" aria-label="Call ONYX"><span aria-hidden="true">☎</span> <span>Call</span></a><a href="https://wa.me/${whatsapp}" target="_blank" rel="noopener" aria-label="Message ONYX on WhatsApp"><span aria-hidden="true">◌</span> <span>WhatsApp</span></a><button type="button" data-open-contact aria-label="Book trial — free first session"><span aria-hidden="true">＋</span> <span>Book trial</span></button>`;
     document.body.appendChild(bar);
-    bar.querySelector('[data-open-contact]')?.addEventListener('click', () => document.getElementById('contact-dialog')?.showModal());
+    bar.querySelector('[data-open-contact]')?.addEventListener('click', event => {
+      if (window.openContactDialog) window.openContactDialog(event);
+      else document.getElementById('contact-dialog')?.showModal();
+    });
   }
 
   // Member-app navigation layer - safe, box-sizing border-box, no 100vw overflow
@@ -6821,7 +7128,7 @@ if (bootUser && bootUser.supabaseToken) {
     const nav = document.createElement('nav');
     nav.className = 'member-bottom-nav';
     nav.setAttribute('aria-label', 'Member app navigation');
-    nav.innerHTML = `<a href="#profile-today"><b>⌂</b><span>Today</span></a><a href="#profile-training"><b>▤</b><span>Plan</span></a><a href="#profile-progress"><b>◉</b><span>Progress</span></a><a href="#profile-coach"><b>✦</b><span>Coach</span></a><a href="#profile-more"><b>⋯</b><span>More</span></a>`;
+    nav.innerHTML = `<a href="#profile-today"><b aria-hidden="true">⌂</b><span>Today</span></a><a href="#profile-training"><b aria-hidden="true">▤</b><span>Plan</span></a><a href="#profile-progress"><b aria-hidden="true">◉</b><span>Progress</span></a><a href="#profile-coach"><b aria-hidden="true">✦</b><span>Coach</span></a><a href="#profile-more"><b aria-hidden="true">⋯</b><span>More</span></a>`;
     document.body.appendChild(nav);
     // Initially hidden until auth state known (prevents overlap on gate)
     nav.hidden = true;
@@ -6878,7 +7185,13 @@ if (bootUser && bootUser.supabaseToken) {
     const user = currentUser();
     if (!user) return null;
     const copy = JSON.parse(JSON.stringify(user));
-    delete copy.password; delete copy.hash; delete copy.salt;
+    // The local password record is stored as { pass, salt, algo } (see the
+    // signup path) — deleting `password`/`hash` only removed keys that never
+    // exist, so the PBKDF2 hash and salt were exported in the JSON file.
+    // Supabase session tokens and the pass-code seed (passSecret, which the
+    // reception check-in validates against) must never leave the browser.
+    ['pass', 'password', 'hash', 'salt', 'algo', 'supabaseToken', 'supabaseRefreshToken', 'passSecret']
+      .forEach(key => { delete copy[key]; });
     return copy;
   };
   exportButton?.addEventListener('click', () => {
@@ -6912,7 +7225,7 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   if (!lightbox) {
     document.body.insertAdjacentHTML('beforeend', `
       <dialog class="memory-lightbox" id="memory-lightbox" aria-labelledby="memory-lightbox-title">
-        <button type="button" class="plans-close" aria-label="Close memory">✕</button>
+        <button type="button" class="plans-close" aria-label="Close memory"><span aria-hidden="true">✕</span></button>
         <div class="memory-lightbox-grid">
           <div class="memory-lightbox-image"><img id="memory-lightbox-img" alt="" /></div>
           <div class="memory-lightbox-copy">
@@ -6991,15 +7304,12 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
       }
       openLightbox(card);
     });
-    // Keyboard accessibility
-    card.setAttribute('tabindex','0');
-    card.setAttribute('role','button');
-    card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openLightbox(card);
-      }
-    });
+    /* Keyboard + screen-reader access goes through the real .memory-zoom-btn
+       inside the card. Marking the card itself role="button" nested one
+       interactive control inside another (axe: nested-interactive) and put a
+       role on <article> that ARIA does not allow there (axe: aria-allowed-role),
+       while adding a second tab stop for the exact same action. The click
+       handler stays as a pointer convenience only. */
   });
 
   // Zoom buttons (stop propagation handled above)
@@ -7120,16 +7430,11 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
     toggle(e);
   }, { passive: false });
 
-  wrap.setAttribute('tabindex','0');
-  wrap.setAttribute('role','button');
-  wrap.setAttribute('aria-label','Tap to play or pause coach tour with voiceover');
-  wrap.addEventListener('keydown', (e) => {
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      toggle();
-    }
-  });
-
+  /* The wrap keeps its click/touch handlers so tapping anywhere on the video
+     still plays it, but it is NOT advertised as a control: #film-play-btn inside
+     it is the real one, and sync() already keeps its label and icon in step.
+     Giving the wrapper role="button" too nested one control inside another
+     (axe: nested-interactive) and added a second tab stop for the same action. */
   if (btn) btn.addEventListener('click', toggle);
 
   video.addEventListener('play', sync);
@@ -7148,4 +7453,266 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
   // Initial state
   sync();
+})();
+
+/* ===========================================================================
+   TRAINER RAIL — keyboard + button navigation and a position read-out
+   The rail used to be drag/scroll only: a <div> carrying an aria-label with no
+   role (so the label was never exposed), hidden scrollbars, no controls and no
+   way to tell how many coaches there are. It is now a labelled, focusable
+   region with prev/next buttons, arrow-key scrolling and a live "X–Y of Z"
+   status. Dragging, swiping and the scrollbar all still work.
+   =========================================================================== */
+(() => {
+  const rail = document.querySelector('.trainer-rail');
+  if (!rail) return;
+  const cards = [...rail.querySelectorAll('.trainer-card')];
+  if (!cards.length) return;
+  const prevButton = document.getElementById('rail-prev');
+  const nextButton = document.getElementById('rail-next');
+  const statusEl = document.getElementById('rail-status');
+  const motion = () => (reducedMotion ? 'auto' : 'smooth');
+
+  // One card plus the gap between cards, so a press always lands on a snap point.
+  const cardStep = () => {
+    const first = cards[0].getBoundingClientRect();
+    if (first.width > 0) {
+      const gap = cards.length > 1 ? cards[1].getBoundingClientRect().left - first.right : 0;
+      return first.width + Math.max(gap, 0);
+    }
+    return rail.clientWidth || 300;
+  };
+
+  // Cards count as visible once more than half of them is on screen.
+  const visibleRange = () => {
+    const box = rail.getBoundingClientRect();
+    let first = -1;
+    let last = -1;
+    cards.forEach((card, index) => {
+      const rect = card.getBoundingClientRect();
+      const overlap = Math.min(rect.right, box.right) - Math.max(rect.left, box.left);
+      if (rect.width > 0 && overlap >= rect.width * 0.5) {
+        if (first < 0) first = index;
+        last = index;
+      }
+    });
+    if (first < 0) {
+      const fallback = Math.min(cards.length - 1, Math.max(0, Math.round(rail.scrollLeft / (cardStep() || 1))));
+      first = last = fallback;
+    }
+    return [first, last];
+  };
+
+  let lastAnnounced = '';
+  const updateRail = () => {
+    const scrollable = rail.scrollWidth - rail.clientWidth > 2;
+    const atStart = rail.scrollLeft <= 2;
+    const atEnd = !scrollable || rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 2;
+    if (prevButton) prevButton.disabled = atStart;
+    if (nextButton) nextButton.disabled = atEnd;
+    if (statusEl) {
+      const [first, last] = visibleRange();
+      const text = first === last
+        ? `Coach ${first + 1} of ${cards.length}`
+        : `Coaches ${first + 1}–${last + 1} of ${cards.length}`;
+      // Only touch the DOM when the range actually changes, so the live region
+      // is not announced several times during one smooth scroll.
+      if (text !== lastAnnounced) {
+        lastAnnounced = text;
+        statusEl.textContent = text;
+      }
+    }
+  };
+
+  const scrollRail = left => rail.scrollBy({ left, behavior: motion() });
+
+  prevButton?.addEventListener('click', () => scrollRail(-cardStep()));
+  nextButton?.addEventListener('click', () => scrollRail(cardStep()));
+
+  rail.addEventListener('keydown', event => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const step = cardStep();
+    const handled = {
+      ArrowRight: () => scrollRail(step),
+      ArrowLeft: () => scrollRail(-step),
+      PageDown: () => scrollRail(rail.clientWidth),
+      PageUp: () => scrollRail(-rail.clientWidth),
+      Home: () => rail.scrollTo({ left: 0, behavior: motion() }),
+      End: () => rail.scrollTo({ left: rail.scrollWidth, behavior: motion() })
+    }[event.key];
+    if (!handled) return;
+    // Stop the page from scrolling as well; the rail owns these keys once focused.
+    event.preventDefault();
+    handled();
+    updateRail();
+  });
+
+  let railFrame = null;
+  rail.addEventListener('scroll', () => {
+    if (railFrame) return;
+    railFrame = window.requestAnimationFrame(() => { railFrame = null; updateRail(); });
+  }, { passive: true });
+  window.addEventListener('resize', updateRail);
+  updateRail();
+})();
+
+/* ---------------------------------------------------------------------------
+   IN-PAGE PLAN BUTTONS — open the plans dialog in place.
+   Pages that list the plans in the page body (membership.html) used to render
+   "Start monthly" as <a href="index.html#membership">: a round trip back to the
+   home page that also threw away the plan the visitor had just picked. Those
+   are now real buttons that open #plans-dialog on the CURRENT page with that
+   plan already selected, so the next tap is Continue -> secure payment.
+   --------------------------------------------------------------------------- */
+(() => {
+  const dialog = document.getElementById('plans-dialog');
+  // Only the cards that live in the page body — the dialog carries its own set.
+  const pageCards = [...document.querySelectorAll('.plan-card[data-plan]')]
+    .filter(card => !card.closest('dialog'));
+  if (!pageCards.length) return;
+
+  const dialogCards = dialog ? [...dialog.querySelectorAll('.plan-card[data-plan]')] : [];
+
+  // Defensive: a page could ship the cards without the dialog. Rather than leave
+  // a button that does nothing, fall back to the old destination.
+  if (!dialogCards.length) {
+    pageCards.forEach(card => {
+      const button = card.querySelector('.plan-select');
+      if (button) button.addEventListener('click', () => { window.location.assign('index.html#membership'); });
+    });
+    return;
+  }
+
+  pageCards.forEach(card => {
+    const button = card.querySelector('.plan-select');
+    const match = dialogCards.find(c => c.dataset.plan === card.dataset.plan);
+    if (!button || !match) return;
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.addEventListener('click', () => {
+      const main = dialog.querySelector('.plans-main');
+      const confirmation = dialog.querySelector('.plans-confirmation');
+      // Always land on the plan grid, never on a stale payment confirmation.
+      if (main) main.hidden = false;
+      if (confirmation) confirmation.hidden = true;
+      if (!dialog.open) dialog.showModal();
+      // Re-use the dialog's own click handler so the highlight, the summary and
+      // the Continue button all stay in sync — no duplicated selection state.
+      match.click();
+    });
+  });
+})();
+
+/* ---------------------------------------------------------------------------
+   TIMETABLE — day picker + per-class booking.
+   On a phone the grid was a 740px-wide horizontal scroller: seven columns you
+   had to drag sideways through, and the only way to act on any of it was the
+   generic "Book a free trial class" button at the bottom of the section.
+   Below 900px it now collapses to ONE day — today by default — picked from a
+   row of day chips, and every class in it is a Book button that opens the
+   contact dialog already filled in with that exact session. Above 900px the
+   full week stays on screen exactly as before; the classes are still bookable.
+   The picker, the caption and the buttons are all built from the existing
+   table, so without JS the page degrades to the original static timetable.
+   --------------------------------------------------------------------------- */
+(() => {
+  const grid = document.querySelector('.schedule-grid');
+  const head = grid && grid.querySelector('.schedule-head');
+  if (!head) return;
+  const headCells = [...head.children];
+  const dayNames = headCells.slice(1).map(cell => cell.textContent.trim());
+  const rows = [...grid.querySelectorAll('.schedule-row')];
+  if (!dayNames.length || !rows.length) return;
+
+  const BLANK = ['', '\u2014', '\u2013', '-'];
+  const isBlank = text => BLANK.includes(String(text || '').trim());
+  const bodyCells = rows.map(row => [...row.children]);
+
+  /* ---- 1. every real class in the grid becomes a Book button ---- */
+  let bookable = 0;
+  bodyCells.forEach(cells => {
+    const time = cells[0] ? cells[0].textContent.trim() : '';
+    cells.slice(1).forEach((cell, dayIndex) => {
+      const label = cell.textContent.trim();
+      if (isBlank(label)) return;
+      const day = dayNames[dayIndex];
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'class-book';
+      button.innerHTML = `${esc(label)}<span class="class-book-cta" aria-hidden="true">Book</span>`;
+      // The visible text is just the class name, so name the control fully.
+      button.setAttribute('aria-label', `Book ${label}, ${day} at ${time}`);
+      cell.textContent = '';
+      cell.appendChild(button);
+      button.addEventListener('click', () => {
+        if (window.openClassBooking) window.openClassBooking({ name: label, day, time });
+        else if (window.openContactDialog) window.openContactDialog({ currentTarget: { textContent: 'Book a free trial class' } });
+      });
+      bookable++;
+    });
+  });
+  if (!bookable) return;
+
+  /* ---- 2. day chips + a line that says what you are looking at ---- */
+  const picker = document.createElement('div');
+  picker.className = 'schedule-days';
+  picker.setAttribute('role', 'group');
+  picker.setAttribute('aria-label', 'Choose a day to view');
+  const chips = dayNames.map((day, index) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'schedule-day';
+    chip.dataset.day = String(index);
+    chip.setAttribute('aria-pressed', 'false');
+    chip.textContent = day;
+    picker.appendChild(chip);
+    return chip;
+  });
+
+  const caption = document.createElement('p');
+  caption.className = 'schedule-caption';
+  caption.setAttribute('role', 'status');
+  caption.setAttribute('aria-live', 'polite');
+
+
+  const ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const FULL_DAY = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday' };
+  const todayIndex = (new Date().getDay() + 6) % 7;            // 0 = Monday
+  const isToday = dayNames.indexOf(ORDER[todayIndex]);
+  let active = isToday >= 0 ? isToday : 0;                     // Sunday: floor closed
+
+  const classesOn = dayIndex => bodyCells.reduce((total, cells) => {
+    const cell = cells[dayIndex + 1];
+    return total + (cell && cell.querySelector('.class-book') ? 1 : 0);
+  }, 0);
+
+  const narrow = window.matchMedia('(max-width: 900px)');
+  const applyView = () => {
+    const single = narrow.matches;
+    headCells.slice(1).forEach((cell, index) => { cell.hidden = single && index !== active; });
+    bodyCells.forEach(cells => cells.slice(1).forEach((cell, index) => { cell.hidden = single && index !== active; }));
+    if (single) grid.dataset.day = String(active); else delete grid.dataset.day;
+    chips.forEach((chip, index) => chip.setAttribute('aria-pressed', String(single && index === active)));
+    const count = classesOn(active);
+    const day = dayNames[active] || '';
+    // role="table" carries an accessible name — keep it true to what is on screen.
+    grid.setAttribute('aria-label', single
+      ? `${FULL_DAY[day] || day} class timetable`
+      : 'Weekly class timetable');
+    caption.textContent = single
+      ? `${active === isToday ? 'TODAY \u00b7 ' : ''}${day.toUpperCase()} \u00b7 ${count} CLASS${count === 1 ? '' : 'ES'}`
+      : 'SELECT ANY CLASS TO BOOK IT';
+  };
+
+  chips.forEach((chip, index) => chip.addEventListener('click', () => {
+    active = index;
+    applyView();
+  }));
+
+  if (narrow.addEventListener) narrow.addEventListener('change', applyView);
+  else if (narrow.addListener) narrow.addListener(applyView);
+  // First paint happens before the caption joins the DOM, so the live region
+  // never announces the initial state — only changes the visitor makes.
+  applyView();
+  grid.parentNode.insertBefore(picker, grid);
+  grid.parentNode.insertBefore(caption, grid);
 })();
