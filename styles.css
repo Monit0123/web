@@ -424,8 +424,8 @@ footer .footer-support{background:none;border:0;color:inherit;font-family:Manrop
 .schedule-row span{padding:16px 10px 16px 0;line-height:1.45;color:#e6eae4}
 .schedule-time{font:10px 'DM Mono';letter-spacing:.08em;color:var(--muted)}
 .schedule-row span[data-c=s]{color:var(--lime)}
-.schedule-row span[data-c=c]{color:var(--lime)}
-.schedule-row span[data-c=r]{color:var(--lime)}
+.schedule-row span[data-c=c]{color:#9ed22a}
+.schedule-row span[data-c=r]{color:var(--gold-light)}
 .schedule-row span[data-c=o]{color:var(--muted)}
 .schedule-legend{display:flex;flex-wrap:wrap;gap:22px;margin-top:26px;font:9px 'DM Mono';letter-spacing:.12em;text-transform:uppercase}
 .schedule-legend span{display:flex;align-items:center;gap:8px;color:var(--muted)}
@@ -5503,3 +5503,137 @@ h2{letter-spacing:-.07em!important}
 /* The export button is lime, so the site-wide lime ring disappears on it. */
 .rp-export:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .rp-note{margin:0 0 12px;color:var(--muted);font-size:.68rem;letter-spacing:.1em;line-height:1.7;text-transform:uppercase}
+
+
+
+/* ===========================================================================
+   POLISH v83 — exhaustive real-user pass (2026-09-22)
+   Bugs fixed + visuals elevated to pro. No layout regressions.
+   =========================================================================== */
+
+/* 1. MAP — the inverted negative was a dev debug filter. Restore a premium, muted but true map. */
+.visit-map-frame iframe{
+  filter: grayscale(.12) contrast(1.06) saturate(1.08) brightness(1.02) !important;
+  transition: filter .45s ease, transform .45s cubic-bezier(.16,1,.3,1);
+}
+@media(hover:hover){
+  .visit-map-frame:hover iframe{ filter: grayscale(0) contrast(1.08) saturate(1.12) !important; }
+}
+
+/* 2. PROOF — 6 stats need a rock-solid grid at every width. */
+.proof-grid{ gap:0; }
+.proof-grid > div{
+  min-width:0;
+  background: linear-gradient(180deg, rgba(255,255,255,.02), transparent);
+  transition: background .22s ease, border-color .22s ease;
+}
+@media(min-width:1101px){
+  .proof-grid{ grid-template-columns: repeat(6,1fr) !important; }
+  .proof-grid > div{ border-right:1px solid rgba(232,229,220,.12); border-top:0 !important; margin-top:0 !important; padding-top:27px !important; }
+  .proof-grid > div:last-child{ border-right:0; }
+  .proof-grid > div:nth-child(n+4){ border-top:0 !important; }
+}
+@media(max-width:1100px) and (min-width:721px){
+  .proof-grid{ grid-template-columns: repeat(3,1fr) !important; }
+  .proof-grid > div{ border-right:1px solid rgba(232,229,220,.12); }
+  .proof-grid > div:nth-child(3n){ border-right:0; }
+  .proof-grid > div:nth-child(n+4){ border-top:1px solid rgba(232,229,220,.12); margin-top:0; padding-top:27px; }
+}
+@media(max-width:720px){
+  .proof-grid{ grid-template-columns: repeat(2,1fr) !important; }
+  .proof-grid > div{ border-right:1px solid rgba(232,229,220,.12); }
+  .proof-grid > div:nth-child(2n){ border-right:0; }
+  .proof-grid > div:nth-child(n+3){ border-top:1px solid rgba(232,229,220,.12); margin-top:0; padding-top:20px; }
+}
+.proof-grid strong{ font-variant-numeric: tabular-nums; }
+
+/* 3. FACILITY — each card gets a subtle top accent and better image crop. */
+.facility-card{
+  border-radius:16px !important;
+  border:1px solid rgba(232,229,220,.13) !important;
+  background: #0f2b29 !important;
+  box-shadow: 0 14px 36px rgba(0,0,0,.18);
+}
+.facility-card > div{ padding: 24px 22px 26px !important; }
+.facility-card img{ height:250px !important; object-position:center !important; }
+.facility-card h3{ letter-spacing:-.04em !important; }
+
+/* 4. WAYS — rows feel editorial, not spreadsheet. */
+.ways-list a{
+  padding: 22px 16px 22px 0 !important;
+  border-bottom:1px solid rgba(7,22,22,.10) !important;
+}
+.ways-list a:last-child{ border-bottom:0 !important; }
+.ways-list a span{ opacity:.9; min-width: 44px; }
+
+/* 5. PT — the commerce moment should feel considered. */
+.pt-card{ border-radius:16px !important; background: rgba(255,255,255,.025) !important; }
+.pt-card .plan-tag{ letter-spacing:.14em !important; }
+
+/* 6. TRANSFORMS — human stories deserve breathing room. */
+.transform-card{
+  border-radius:16px !important;
+  background: #071616 !important;
+  border: 1px solid rgba(232,229,220,.08);
+}
+.transform-card img{ object-position: center 18% !important; }
+.transform-card span{ letter-spacing:.10em !important; }
+
+/* 7. VISIT — contact band reads as premium concierge, not footer. */
+.visit-title{ letter-spacing:-.07em !important; }
+.visit-grid > div{ min-width:0; }
+.visit-grid p{ overflow-wrap:anywhere; }
+
+/* 8. CONSENT — the required hook must read as required before submit. */
+.consent-field{ position:relative; }
+.consent-field span::after{
+  content:' *';
+  color: var(--lime);
+  font-weight:700;
+}
+.field input:invalid:not(:placeholder-shown){ border-color: rgba(255,138,122,.7); }
+.field-error{ min-height: 1.4em; }
+
+/* 9. DIALOGS — prevent body scroll jank + keep close button hit area generous. */
+dialog::backdrop{ backdrop-filter: blur(10px); }
+.plans-close, .memory-lightbox .plans-close, .ai-dialog .plans-close{
+  min-width:44px; min-height:44px;
+}
+
+/* 10. TRUST BAR — on desktop the CTA must align to the right, not orphan. */
+@media(min-width:721px){
+  .hero-trust{ align-items: center; }
+  .hero-trust .trust-cta{ justify-self: end; }
+}
+
+/* 11. MOBILE BOTTOM BARS — ensure FABs and bars never collide with safe-area. */
+@supports (padding: max(0px)){
+  .mobile-action-bar{ padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .member-bottom-nav{ padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}
+
+/* 12. SCHEDULE — today chip should be obvious on load. */
+.schedule-day[aria-pressed="true"]{
+  box-shadow: 0 6px 18px rgba(214,254,55,.18);
+}
+
+/* 13. FILM — the poster should feel cinematic, not snapshot. */
+.film-video-wrap video{ object-position: center 42% !important; }
+
+/* 14. FOOTER — tighten on large screens so it never wraps awkwardly. */
+@media(min-width:980px){
+  footer div{ gap: 18px 28px !important; }
+}
+
+/* 15. ACCESSIBILITY — keep focus visible on dark panels where lime would vanish. */
+.quote .story-dot:focus-visible, .quote-footer .story-pause:focus-visible{
+  outline-color:#071616 !important;
+}
+
+
+/* v83b — schedule legend: stop the copy-paste lime monochrome, make categories legible */
+.schedule-legend span[data-c="s"]{ color: var(--lime) !important; }
+.schedule-legend span[data-c="c"]{ color: #8fb82a !important; }
+.schedule-legend span[data-c="r"]{ color: #e8cf8f !important; }
+.schedule-legend span[data-c="o"]{ color: var(--muted) !important; }
+.schedule-legend span:before{ opacity:.95; }

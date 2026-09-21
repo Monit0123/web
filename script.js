@@ -429,7 +429,13 @@ if (menuButton && mobileMenu) {
     mobileMenu.classList.toggle('is-open', open);
     menuButton.setAttribute('aria-expanded', String(open));
     menuButton.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
-    menuButton.textContent = open ? '✕' : '☰';
+    menuButton.innerHTML = open ? '<span aria-hidden="true">✕</span>' : '<span aria-hidden="true">☰</span>';
+    if (open) {
+      const firstLink = mobileMenu.querySelector('a');
+      if (firstLink) setTimeout(() => firstLink.focus(), 120);
+    } else {
+      menuButton.focus();
+    }
   };
   menuButton.addEventListener('click', () => setMenuOpen(!mobileMenu.classList.contains('is-open')));
   window.addEventListener('keydown', event => {
@@ -437,6 +443,9 @@ if (menuButton && mobileMenu) {
   });
   window.matchMedia('(min-width: 721px)').addEventListener('change', event => {
     if (event.matches) setMenuOpen(false);
+  });
+  mobileMenu.addEventListener('click', event => {
+    if (event.target === mobileMenu) setMenuOpen(false);
   });
   // Same-page anchors: unlock the body first, then smooth-scroll.
   mobileMenu.querySelectorAll('a[href^="#"]').forEach(link => link.addEventListener('click', event => {
@@ -571,6 +580,7 @@ if (contactDialog) {
     const phone = phoneInput.value.replace(/\D/g, '');
     if (name.length < 2) return showFieldError('Please tell us your name.');
     if (!/^[6-9]\d{9}$/.test(phone)) return showFieldError('Enter a valid 10-digit Indian mobile number.');
+    if (!contactForm.elements['contact-consent']?.checked) return showFieldError('Please agree to be contacted.');
     showFieldError('');
 
     const valueOf = name => { const field = contactForm.elements[name]; return field ? String(field.value || '').trim() : ''; };
@@ -1374,6 +1384,8 @@ authDialog.querySelectorAll('.auth-tab').forEach(tab => tab.addEventListener('cl
   });
   document.getElementById('auth-name-field').hidden = authMode === 'login';
   authDialog.querySelector('.auth-submit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
+  const _err = document.getElementById('auth-error');
+  if (_err) { _err.textContent = ''; _err.hidden = true; }
 }));
 
 const useLocalBtn = authDialog.querySelector('#auth-use-local');
@@ -2345,7 +2357,7 @@ const renderDashboard = user => {
     if (!user) return;
     const label = foodForm.elements.food.value.trim().slice(0, 40);
     const kcal = parseInt(foodForm.elements.kcal.value, 10);
-    if (!label || !(kcal > 0)) return;
+    if (!label || !(kcal > 0 && kcal <= 5000)) return;
     const today = dayKey();
     user.foodLog[today] = user.foodLog[today] || [];
     user.foodLog[today].push({ label, kcal });
@@ -2372,7 +2384,7 @@ const renderDashboard = user => {
     const user = currentUser();
     if (!user) return;
     const val = parseInt(stepsForm.elements.steps.value, 10);
-    if (!(val > 0)) return;
+    if (!(val > 0 && val <= 50000)) return;
     const today = dayKey();
     user.stepsLog[today] = (user.stepsLog[today] || 0) + val;
     saveCurrentUser(user);
