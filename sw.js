@@ -1,39 +1,46 @@
-const CACHE = 'onyx-shell-v82';
+const CACHE = 'onyx-shell-v90';
 const APP_SHELL = [
-  './', './index.html?v=82', './styles.css?v=82', './script.js?v=82', './site.webmanifest',
-  './assets/gym-hero.webp', './assets/gym-hero-900.webp', './assets/favicon.svg',
-  './assets/film/walk-06-wide.jpg?v=82'
+  './', './index.html?v=90', './styles.css?v=90', './script.js?v=90', './site.webmanifest',
+  './assets/gym-hero.webp?v=90', './assets/gym-hero-900.webp?v=90', './assets/favicon.svg',
+  './assets/film/walk-06-wide.jpg?v=90'
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then(cache => cache.addAll(APP_SHELL).catch(() => {}))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) return;
-  // Don't cache videos in SW — let browser handle range requests and avoid quota issues
-  if (event.request.url.includes('.mp4') || event.request.destination === 'video') {
-    return;
-  }
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith('.mp4') || event.request.destination === 'video') return;
   const request = event.request;
   const isDocument = request.mode === 'navigate' || request.destination === 'document';
   event.respondWith(
     isDocument
       ? fetch(request).then(response => {
           const copy = response.clone();
-          caches.open(CACHE).then(cache => cache.put(request, copy));
+          caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
           return response;
         }).catch(() => caches.match(request).then(cached => cached || caches.match('./index.html')))
       : caches.match(request).then(cached => cached || fetch(request).then(response => {
-          const copy = response.clone();
-          caches.open(CACHE).then(cache => cache.put(request, copy));
+          if (response && response.status === 200 && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
+          }
           return response;
-        }))
+        }).catch(() => cached))
   );
 });
-
-
