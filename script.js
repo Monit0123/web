@@ -7404,6 +7404,24 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   const bar = document.getElementById('film-progress-bar');
   if (!wrap || !video) return;
 
+  // Pick the correct source based on viewport (the <source media> attribute is
+  // only valid inside <picture>, not <video>, so we set video.src synchronously
+  // from a global set by an inline head script before the <video> tag parses).
+  // Saves ~4.7 MB on mobile; resize across the 720px boundary re-picks the file.
+  const MOBILE_SRC = 'assets/onyx-overview-720.mp4?v=90';
+  const DESKTOP_SRC = 'assets/onyx-overview.mp4?v=90';
+  const pickSource = () => {
+    const mobile = window.matchMedia('(max-width: 720px)').matches;
+    const chosen = mobile ? MOBILE_SRC : DESKTOP_SRC;
+    if (!video.currentSrc || !video.currentSrc.endsWith(chosen.split('/').pop())) {
+      video.src = chosen;
+      video.load();
+    }
+  };
+  video.src = window.__ONYX_VIDEO_SRC__ || DESKTOP_SRC;
+  pickSource();
+  window.addEventListener('resize', pickSource, { passive: true });
+
   const sync = () => {
     const playing = !video.paused && !video.ended;
     wrap.classList.toggle('is-playing', playing);
