@@ -1,8 +1,8 @@
 # ONYX Athletic Club — website
 
 Static marketing site for ONYX Athletic Club (Kharar, Punjab). No build step, no
-dependencies: HTML, one stylesheet, one script. Open `index.html` or serve the
-folder and it runs.
+dependencies: HTML, one stylesheet, a small core script plus two feature chunks.
+Open `index.html` or serve the folder and it runs.
 
 ```bash
 python3 -m http.server 3000    # then visit http://localhost:3000
@@ -23,6 +23,34 @@ python3 -m http.server 3000    # then visit http://localhost:3000
 
 Supporting files: `robots.txt`, `sitemap.xml`, `site.webmanifest`, `favicon.ico`,
 `.nojekyll` (stops GitHub Pages running the folder through Jekyll).
+
+## Scripts & fonts
+
+JavaScript ships as three classic `<script defer>` files (no bundler — they
+share top-level scope, in this order):
+
+| File | Size | Loaded by | Contains |
+| --- | --- | --- | --- |
+| `script.js` (core) | ~140 KB | **every page** | `ONYX` config, dialogs/menu/auth, routing & role helpers, shared utilities, marketing sections, payments, public page widgets, boot (`DOMContentLoaded` renders `renderProfile`/`renderCoach`/`renderAdmin` behind `typeof` guards) |
+| `js/dashboard.js` | ~200 KB | `profile.html`, `trainers.html` | member + coach features (workouts, diet, progress, messaging, PT, …) |
+| `js/admin.js` | ~70 KB | `admin.html` (never loads `dashboard.js`) | admin control center, leads, inventory, staff, reports, site CMS editor |
+
+Public pages therefore download only core. The chunks cross-referencing rules:
+core may *call* chunk renderers only through `typeof … === 'function'` guards;
+chunks may freely use core functions. Keep it that way or public pages throw
+on load. Editing the site means editing core for anything shared/marketing and
+the right chunk for member/coach/admin features — `script.js` reads roughly as
+S01–S06 (core) → S07–S18 (dashboard) → S19–S20 (admin) → boot → admin site
+content, matching the original single-file order.
+
+Fonts are self-hosted in `assets/fonts/` (20 woff2 files — latin + latin-ext, `font-display:
+swap`, declared at the top of `styles.css`): DM Mono 400/500, Manrope 400/500/
+600/700/800, Playfair Display 500/600 + 500 italic — exactly the weights the
+CSS uses, sourced from `@fontsource`; each face carries Google's `unicode-range`, so `₹` (U+20B9) resolves from the latin-ext file). The public pages `<link rel="preload">`
+Manrope 400/500 and Playfair 500 (the hero's first paint); there is no Google
+Fonts request anywhere. If you start using a new weight or character range,
+copy the matching `@fontsource` `latin-*.woff2` / `latin-ext-*.woff2` into
+`assets/fonts/` and add its `@font-face` with the matching `unicode-range`.
 
 ## Before going live — do these three things
 
@@ -77,11 +105,16 @@ The live payment links (4 membership + 3 PT packs) are in `PAYMENT_LINKS` in `sc
 - **Images.** Photography ships as WebP with JPEG fallbacks (`<picture>` in
   markup, `image-set()` in CSS). If you replace a photo, generate both:
   `convert photo.jpg -strip -resize 'x1200>' -quality 78 photo.webp`
-- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS`, `MANAGER_EMAILS`, `RECEPTION_PIN` and `GYM_LOCATION` live in `script.js` next to their features — confirm the PIN and coordinates before launch.
-- **Cache busting.** Stylesheet and script are linked as `?v=82` (and
-  `sw.js` caches `onyx-shell-v82`). Bump that number in every `.html` file and
-  in `sw.js` whenever you edit `styles.css` or `script.js`, otherwise the
-  service worker keeps serving the old copy.
+- **Demo config.** `COACH_EMAILS`, `ADMIN_EMAILS` and `MANAGER_EMAILS` live in
+  the shared block of `script.js` (just above the role helpers); `RECEPTION_PIN`
+  and `GYM_LOCATION` live in `js/dashboard.js` next to their features — confirm
+  the PIN and coordinates before launch.
+- **Cache busting.** Stylesheet and scripts are linked as `?v=94` (and
+  `sw.js` caches `onyx-shell-v94`). Bump that number in every `.html` file, in
+  the chunk tags, and in `sw.js`'s `APP_SHELL` whenever you edit `styles.css`,
+  `script.js`, `js/dashboard.js` or `js/admin.js`, otherwise the service worker
+  keeps serving the old copy. (Media assets keep their own older `?v=` and
+  should match whatever `sw.js` precaches.)
 - **Accessibility.** Skip links, focus-visible states, labelled dialogs and a
   `prefers-reduced-motion` block are in place — keep them if you refactor.
 - `profile.html` is `noindex` and disallowed in `robots.txt`; it is a private

@@ -1,6 +1,6 @@
-const CACHE = 'onyx-shell-v90';
+const CACHE = 'onyx-shell-v94';
 const APP_SHELL = [
-  './', './index.html?v=90', './styles.css?v=90', './script.js?v=90', './site.webmanifest',
+  './', './index.html?v=94', './styles.css?v=94', './script.js?v=94', './site.webmanifest',
   './assets/gym-hero.webp?v=90', './assets/gym-hero-900.webp?v=90', './assets/favicon.svg',
   './assets/film/walk-06-wide.jpg?v=90'
 ];
